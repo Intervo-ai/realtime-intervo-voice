@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Twilio WebRTC Voice Call</title>
+    <script src="https://media.twiliocdn.com/sdk/js/client/v1.13/twilio.min.js"></script>
+  </head>
+  <body>
+    <h1>Twilio WebRTC Voice Call</h1>
+    <button id="callButton">Make a Call</button>
+    <button id="hangupButton" disabled>Hang Up</button>
+    <p>Status: <span id="status">Disconnected</span></p>
+
+    <script>
+      let device;
+
+      // Fetch the Twilio token from the backend
+      async function getToken() {
+        const response = await fetch("http://localhost:3000/token");
+        const data = await response.json();
+        return data.token;
+      }
+
+      // Initialize Twilio Client Device with token
+      async function initializeDevice() {
+        const token = await getToken();
+
+        device = new Twilio.Device(token, {
+          debug: true,
+        });
+
+        device.on("ready", () => {
+          console.log("Twilio.Device is ready.");
+          document.getElementById("status").textContent = "Ready";
+        });
+
+        device.on("error", (error) => {
+          console.error("Twilio.Device error:", error.message);
+          document.getElementById("status").textContent =
+            "Error: " + error.message;
+        });
+
+        device.on("disconnect", () => {
+          console.log("Call ended.");
+          document.getElementById("status").textContent = "Disconnected";
+          document.getElementById("hangupButton").disabled = true;
+          document.getElementById("callButton").disabled = false;
+        });
+
+        device.on("connect", () => {
+          console.log("Call connected.");
+          document.getElementById("status").textContent = "Connected";
+          document.getElementById("hangupButton").disabled = false;
+          document.getElementById("callButton").disabled = true;
+        });
+      }
+
+      // Make a call
+      document.getElementById("callButton").onclick = () => {
+        const params = { To: "client" }; // You can pass parameters to the TwiML App
+        device.connect(params);
+      };
+
+      // Hang up the call
+      document.getElementById("hangupButton").onclick = () => {
+        device.disconnectAll();
+      };
+
+      // Initialize device on load
+      window.onload = initializeDevice;
+    </script>
+  </body>
+</html>
