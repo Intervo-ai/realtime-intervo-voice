@@ -25,6 +25,8 @@ router.post("/", async (req, res) => {
       input: "speech",
       action: "/voice", // Post to the same route for next steps
       speechTimeout: "0.5",
+      language: "en-IN" // Set to Indian English
+
     });
   } else {
     // Add user input to conversation history
