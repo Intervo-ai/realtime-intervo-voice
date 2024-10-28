@@ -5,17 +5,20 @@ const { streamTTS } = require('./services/googleTTS');
 
 const client = new speech.SpeechClient();
 
-// Add these required packages at the top of your file
-const { Transform } = require('stream');
-const wav = require('wav');
-const mulaw = require('mu-law');
-
-
 module.exports = function (server) {
   const wss = new WebSocket.Server({ server });
 
+  // Function to start and track time
+  function startTimer() {
+    const startTime = Date.now();
+    return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`; // Returns elapsed time in seconds
+  }
+
   wss.on("connection", (ws) => {
     console.log("Twilio connected to WebSocket");
+    const timer = startTimer(); // Start timer
+
+    console.log(`[${timer()}] WebSocket connection established`);
 
     let conversationHistory = "";
     let inactivityTimeout;
@@ -33,7 +36,6 @@ module.exports = function (server) {
       singleUtterance: false,
     };
 
-
     const recognizeStream = client
       .streamingRecognize(request)
       .on("data", async (data) => {
@@ -41,7 +43,7 @@ module.exports = function (server) {
           const transcription = data.results[0].alternatives[0].transcript;
           const isFinal = data.results[0].isFinal;
 
-          console.log(`Transcription: ${transcription}`);
+          console.log(`[${timer()}] Transcription received: ${transcription}`);
           if (isFinal) {
             clearTimeout(inactivityTimeout);
             await processTranscription(transcription);
@@ -51,20 +53,18 @@ module.exports = function (server) {
         }
       })
       .on("error", (error) => {
-        console.error("Google Speech-to-Text error:", error);
+        console.error(`[${timer()}] Google Speech-to-Text error:`, error);
       })
       .on("end", () => {
-        console.log("Google Speech-to-Text streaming ended.");
+        console.log(`[${timer()}] Google Speech-to-Text streaming ended.`);
       });
-
 
     ws.on("message", (message) => {
       const data = JSON.parse(message.toString("utf8"));
 
       if (data.event === "start") {
-        // Capture streamSid from the start event
-        streamSid = data.streamSid;
-        console.log(`Stream started with streamSid: ${streamSid}`);
+        streamSid = data.streamSid; // Capture streamSid from the start event
+        console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
       }
 
       if (data.event === "media") {
@@ -73,41 +73,43 @@ module.exports = function (server) {
       }
 
       if (data.event === "stop") {
-        console.log("Media WS: Stop event received, ending Google stream.");
+        console.log(`[${timer()}] Media WS: Stop event received, ending Google stream.`);
         recognizeStream.end();
       }
     });
 
     ws.on("close", () => {
-      console.log("WebSocket connection closed");
+      console.log(`[${timer()}] WebSocket connection closed`);
       recognizeStream.end();
       clearTimeout(inactivityTimeout);
     });
 
     ws.on("error", (error) => {
-      console.error("WebSocket error:", error);
+      console.error(`[${timer()}] WebSocket error:`, error);
     });
 
     function resetInactivityTimeout(transcription) {
       clearTimeout(inactivityTimeout);
       inactivityTimeout = setTimeout(async () => {
-        console.log("No new transcription for 1 second, processing...");
+        console.log(`[${timer()}] No new transcription for 1 second, processing...`);
         await processTranscription(transcription);
       }, 500);
     }
 
     async function processTranscription(transcription) {
+      console.log(`[${timer()}] Processing transcription: "${transcription}"`);
       conversationHistory += `User: ${transcription}\n`;
 
+      console.log(`[${timer()}] Sending request to OpenAI`);
       const openAIResponse = await handleOpenAIStream(conversationHistory);
-      console.log(`OpenAI Response: ${openAIResponse}`);
+      console.log(`[${timer()}] Received response from OpenAI: "${openAIResponse}"`);
 
       conversationHistory += `Assistant: ${openAIResponse}\n`;
 
-      // Generate TTS audio for the OpenAI response
-      const audioContent = await streamTTS(openAIResponse);
+      console.log(`[${timer()}] Generating TTS audio for OpenAI response`);
+      const audioContent = await streamTTS("Kerala is in Central india and it has lots of beaches. People go to these beaches to relax and enjoy the sun and the sand. I am from Kerala and I love it here. Have you ever been to kerala, my dear friend?");
 
-      // Send the audio content directly to Twilio via WebSocket
+      console.log(`[${timer()}] Starting audio stream to Twilio`);
       streamAudioToTwilio(audioContent);
     }
 
@@ -116,18 +118,16 @@ module.exports = function (server) {
       let offset = 0;
 
       if (useChunks) {
-        // Chunked Streaming
         function sendChunk() {
           if (offset >= audioContent.length) {
-            console.log("Finished streaming TTS audio to Twilio (Chunked)");
+            console.log(`[${timer()}] Finished streaming TTS audio to Twilio (Chunked)`);
 
-            // Send a "mark" event to signal the end of the audio stream
             const markMessage = {
               event: "mark",
               streamSid: streamSid,
               mark: { name: "End of response" },
             };
-            console.log(`[${new Date().toISOString()}] Sending mark event (Chunked)`);
+            console.log(`[${timer()}] Sending mark event (Chunked)`);
             ws.send(JSON.stringify(markMessage));
             return;
           }
@@ -141,8 +141,7 @@ module.exports = function (server) {
             },
           };
 
-          // Log timestamp and send chunk
-          console.log(`[${new Date().toISOString()}] Sending audio chunk`);
+          console.log(`[${timer()}] Sending audio chunk`);
           ws.send(JSON.stringify(mediaMessage));
 
           offset += chunkSize;
@@ -151,7 +150,6 @@ module.exports = function (server) {
 
         sendChunk();
       } else {
-        // Non-Chunked Streaming
         const audioChunk = audioContent.toString("base64");
         const mediaMessage = {
           event: "media",
@@ -161,26 +159,23 @@ module.exports = function (server) {
           },
         };
 
-        // Log timestamp and send full audio content
-        console.log(`[${new Date().toISOString()}] Sending full audio content`);
+        console.log(`[${timer()}] Sending full audio content`);
         ws.send(JSON.stringify(mediaMessage), (error) => {
           if (error) {
-            console.error("Error sending audio to Twilio:", error);
+            console.error(`[${timer()}] Error sending audio to Twilio:`, error);
           } else {
-            console.log("Sent full audio content to Twilio (Non-Chunked)");
+            console.log(`[${timer()}] Sent full audio content to Twilio (Non-Chunked)`);
 
-            // Send a "mark" event to indicate the end of the audio stream
             const markMessage = {
               event: "mark",
               streamSid: streamSid,
               mark: { name: "End of response" },
             };
-            console.log(`[${new Date().toISOString()}] Sending mark event (Non-Chunked)`);
+            console.log(`[${timer()}] Sending mark event (Non-Chunked)`);
             ws.send(JSON.stringify(markMessage));
           }
         });
       }
     }
-
   });
 };
