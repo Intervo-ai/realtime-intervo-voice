@@ -2,6 +2,7 @@ const WebSocket = require("ws");
 const speech = require("@google-cloud/speech");
 const { handleOpenAIStream } = require('./services/openAI');
 const { streamTTS } = require('./services/googleTTS');
+const { streamTTSWithPolly } = require('./services/pollyTTS');
 
 const client = new speech.SpeechClient();
 
@@ -93,7 +94,7 @@ module.exports = function (server) {
       inactivityTimeout = setTimeout(async () => {
         console.log(`[${timer()}] No new transcription for 1 second, processing...`);
         await processTranscription(transcription);
-      }, 500);
+      }, 800);
     }
 
     async function processTranscription(transcription) {
@@ -101,81 +102,24 @@ module.exports = function (server) {
       conversationHistory += `User: ${transcription}\n`;
 
       console.log(`[${timer()}] Sending request to OpenAI`);
-      const openAIResponse = await handleOpenAIStream(conversationHistory);
-      console.log(`[${timer()}] Received response from OpenAI: "${openAIResponse}"`);
+      const transcriptionResponse = await handleOpenAIStream(conversationHistory);
+      console.log(`[${timer()}] Received response from OpenAI: "${transcriptionResponse}"`);
 
-      conversationHistory += `Assistant: ${openAIResponse}\n`;
+      conversationHistory += `Assistant: ${transcriptionResponse}\n`;
 
-      console.log(`[${timer()}] Generating TTS audio for OpenAI response`);
-      const audioContent = await streamTTS("Kerala is in Central india and it has lots of beaches. People go to these beaches to relax and enjoy the sun and the sand. I am from Kerala and I love it here. Have you ever been to kerala, my dear friend?");
+      // console.log(`[${timer()}] Generating TTS audio for OpenAI response`);
+      // const audioContent = await streamTTS("Kerala is in Central india and it has lots of beaches. People go to these beaches to relax and enjoy the sun and the sand. I am from Kerala and I love it here. Have you ever been to kerala, my dear friend?");
 
       console.log(`[${timer()}] Starting audio stream to Twilio`);
-      streamAudioToTwilio(audioContent);
+    
+    const useGoogle = true;
+    const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
+
+    ttsFunction(transcriptionResponse, ws, streamSid, true) // Choose true or false for chunked streaming
+      .then(() => console.log("TTS processing completed"))
+      .catch((error) => console.error("Error in TTS processing:", error));
+
     }
 
-    function streamAudioToTwilio(audioContent, useChunks = true) {
-      const chunkSize = 320; // Each chunk represents 20 ms at 8 kHz
-      let offset = 0;
-
-      if (useChunks) {
-        function sendChunk() {
-          if (offset >= audioContent.length) {
-            console.log(`[${timer()}] Finished streaming TTS audio to Twilio (Chunked)`);
-
-            const markMessage = {
-              event: "mark",
-              streamSid: streamSid,
-              mark: { name: "End of response" },
-            };
-            console.log(`[${timer()}] Sending mark event (Chunked)`);
-            ws.send(JSON.stringify(markMessage));
-            return;
-          }
-
-          const audioChunk = audioContent.slice(offset, offset + chunkSize).toString("base64");
-          const mediaMessage = {
-            event: "media",
-            streamSid: streamSid,
-            media: {
-              payload: audioChunk,
-            },
-          };
-
-          console.log(`[${timer()}] Sending audio chunk`);
-          ws.send(JSON.stringify(mediaMessage));
-
-          offset += chunkSize;
-          setTimeout(sendChunk, 20); // 20ms delay to simulate real-time playback
-        }
-
-        sendChunk();
-      } else {
-        const audioChunk = audioContent.toString("base64");
-        const mediaMessage = {
-          event: "media",
-          streamSid: streamSid,
-          media: {
-            payload: audioChunk,
-          },
-        };
-
-        console.log(`[${timer()}] Sending full audio content`);
-        ws.send(JSON.stringify(mediaMessage), (error) => {
-          if (error) {
-            console.error(`[${timer()}] Error sending audio to Twilio:`, error);
-          } else {
-            console.log(`[${timer()}] Sent full audio content to Twilio (Non-Chunked)`);
-
-            const markMessage = {
-              event: "mark",
-              streamSid: streamSid,
-              mark: { name: "End of response" },
-            };
-            console.log(`[${timer()}] Sending mark event (Non-Chunked)`);
-            ws.send(JSON.stringify(markMessage));
-          }
-        });
-      }
-    }
   });
 };
