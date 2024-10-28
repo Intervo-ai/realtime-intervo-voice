@@ -9,63 +9,72 @@ const client = new speech.SpeechClient();
 module.exports = function (server) {
   const wss = new WebSocket.Server({ server });
 
-  // Function to start and track time
   function startTimer() {
     const startTime = Date.now();
-    return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`; // Returns elapsed time in seconds
+    return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`;
   }
 
   wss.on("connection", (ws) => {
     console.log("Twilio connected to WebSocket");
-    const timer = startTimer(); // Start timer
-
+    const timer = startTimer();
     console.log(`[${timer()}] WebSocket connection established`);
 
     let conversationHistory = "";
     let inactivityTimeout;
-    let streamSid; // Variable to store the stream SID
-    let isProcessingTTS = false; // Flag to track TTS processing status
+    let streamSid;
+    let isProcessingTTS = false;
+    let ignoreNewTranscriptions = false;
 
-    // Configure Google Speech-to-Text Streaming Request
-    const request = {
-      config: {
-        encoding: "MULAW",
-        sampleRateHertz: 8000,
-        languageCode: "en-IN",
-        enableAutomaticPunctuation: true,
-      },
-      interimResults: true,
-      singleUtterance: true,
-    };
+    function createRecognizeStream() {
+      const request = {
+        config: {
+          encoding: "MULAW",
+          sampleRateHertz: 8000,
+          languageCode: "en-IN",
+          enableAutomaticPunctuation: true,
+        },
+        interimResults: false,
+        singleUtterance: true,
+      };
 
-    const recognizeStream = client
-      .streamingRecognize(request)
-      .on("data", async (data) => {
-        if (data.results[0] && data.results[0].alternatives[0]) {
-          const transcription = data.results[0].alternatives[0].transcript;
-          const isFinal = data.results[0].isFinal;
+      const recognizeStream = client.streamingRecognize(request)
+        .on("data", async (data) => {
+          if (ignoreNewTranscriptions) return;
 
-          console.log(`[${timer()}] Transcription received: ${transcription}`);
-          if (isFinal) {
-            clearTimeout(inactivityTimeout);
-            await processTranscription(transcription);
-          } else {
-            resetInactivityTimeout(transcription);
+          if (data.results[0] && data.results[0].alternatives[0]) {
+            const transcription = data.results[0].alternatives[0].transcript;
+            const isFinal = data.results[0].isFinal;
+
+            console.log(`[${timer()}] Transcription received: ${transcription}`);
+            if (isFinal) {
+              clearTimeout(inactivityTimeout);
+              await processTranscription(transcription);
+            } else {
+              resetInactivityTimeout(transcription);
+            }
           }
-        }
-      })
-      .on("error", (error) => {
-        console.error(`[${timer()}] Google Speech-to-Text error:`, error);
-      })
-      .on("end", () => {
-        console.log(`[${timer()}] Google Speech-to-Text streaming ended.`);
-      });
+        })
+        .on("error", (error) => {
+          console.error(`[${timer()}] Google Speech-to-Text error:`, error);
+        })
+        .on("end", () => {
+          console.log(`[${timer()}] Google Speech-to-Text streaming ended.`);
+          if (!isProcessingTTS) {
+            console.log(`[${timer()}] Restarting transcription stream after end`);
+            createRecognizeStream(); // Restart transcription after each end if not in TTS processing
+          }
+        });
+
+      return recognizeStream;
+    }
+
+    let recognizeStream = createRecognizeStream();
 
     ws.on("message", (message) => {
       const data = JSON.parse(message.toString("utf8"));
 
       if (data.event === "start") {
-        streamSid = data.streamSid; // Capture streamSid from the start event
+        streamSid = data.streamSid;
         console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
       }
 
@@ -95,11 +104,15 @@ module.exports = function (server) {
       inactivityTimeout = setTimeout(async () => {
         console.log(`[${timer()}] No new transcription for 1 second, processing...`);
         await processTranscription(transcription);
-      }, 1000);
+      }, 500);
     }
 
     async function processTranscription(transcription) {
       console.log(`[${timer()}] Processing transcription: "${transcription}"`);
+
+      ignoreNewTranscriptions = true;
+      recognizeStream.pause();
+
       conversationHistory += `User: ${transcription}\n`;
 
       console.log(`[${timer()}] Sending request to OpenAI`);
@@ -110,17 +123,14 @@ module.exports = function (server) {
 
       console.log(`[${timer()}] Starting TTS processing for OpenAI response`);
 
-      // Queue TTS response if another TTS response is already being processed
       if (isProcessingTTS) {
         console.log(`[${timer()}] Waiting for current TTS to finish...`);
         return;
       }
 
-      // Set TTS processing flag to prevent overlapping
       isProcessingTTS = true;
 
-      // Choose between Google and Polly TTS
-      const useGoogle = true; // Change to false to use Polly
+      const useGoogle = true;
       const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
 
       try {
@@ -129,12 +139,13 @@ module.exports = function (server) {
       } catch (error) {
         console.error("Error in TTS processing:", error);
       } finally {
-        // Reset the TTS processing flag after streaming completes
+        console.log("finally block executed");
         isProcessingTTS = false;
+        ignoreNewTranscriptions = false;
 
-        // Restart the transcription process after TTS response
-        console.log(`[${timer()}] Restarting transcription loop`);
-        recognizeStream.resume();
+        recognizeStream.end(); // End current stream after TTS completes
+        console.log(`[${timer()}] Ready to process new transcriptions, restarting stream`);
+        recognizeStream =  createRecognizeStream(); // Restart new transcription stream
       }
     }
   });
