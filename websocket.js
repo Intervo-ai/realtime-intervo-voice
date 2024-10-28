@@ -24,6 +24,7 @@ module.exports = function (server) {
     let conversationHistory = "";
     let inactivityTimeout;
     let streamSid; // Variable to store the stream SID
+    let isProcessingTTS = false; // Flag to track TTS processing status
 
     // Configure Google Speech-to-Text Streaming Request
     const request = {
@@ -34,7 +35,7 @@ module.exports = function (server) {
         enableAutomaticPunctuation: true,
       },
       interimResults: true,
-      singleUtterance: false,
+      singleUtterance: true,
     };
 
     const recognizeStream = client
@@ -94,7 +95,7 @@ module.exports = function (server) {
       inactivityTimeout = setTimeout(async () => {
         console.log(`[${timer()}] No new transcription for 1 second, processing...`);
         await processTranscription(transcription);
-      }, 800);
+      }, 1000);
     }
 
     async function processTranscription(transcription) {
@@ -107,19 +108,34 @@ module.exports = function (server) {
 
       conversationHistory += `Assistant: ${transcriptionResponse}\n`;
 
-      // console.log(`[${timer()}] Generating TTS audio for OpenAI response`);
-      // const audioContent = await streamTTS("Kerala is in Central india and it has lots of beaches. People go to these beaches to relax and enjoy the sun and the sand. I am from Kerala and I love it here. Have you ever been to kerala, my dear friend?");
+      console.log(`[${timer()}] Starting TTS processing for OpenAI response`);
 
-      console.log(`[${timer()}] Starting audio stream to Twilio`);
-    
-    const useGoogle = true;
-    const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
+      // Queue TTS response if another TTS response is already being processed
+      if (isProcessingTTS) {
+        console.log(`[${timer()}] Waiting for current TTS to finish...`);
+        return;
+      }
 
-    ttsFunction(transcriptionResponse, ws, streamSid, true) // Choose true or false for chunked streaming
-      .then(() => console.log("TTS processing completed"))
-      .catch((error) => console.error("Error in TTS processing:", error));
+      // Set TTS processing flag to prevent overlapping
+      isProcessingTTS = true;
 
+      // Choose between Google and Polly TTS
+      const useGoogle = true; // Change to false to use Polly
+      const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
+
+      try {
+        await ttsFunction(transcriptionResponse, ws, streamSid, true);
+        console.log(`[${timer()}] TTS processing completed`);
+      } catch (error) {
+        console.error("Error in TTS processing:", error);
+      } finally {
+        // Reset the TTS processing flag after streaming completes
+        isProcessingTTS = false;
+
+        // Restart the transcription process after TTS response
+        console.log(`[${timer()}] Restarting transcription loop`);
+        recognizeStream.resume();
+      }
     }
-
   });
 };
