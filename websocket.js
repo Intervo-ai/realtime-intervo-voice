@@ -1,127 +1,186 @@
 const WebSocket = require("ws");
-const fs = require("fs");
-const path = require("path");
-const ffmpeg = require("fluent-ffmpeg");
-const TwilioMediaStreamSaveAudioFile = require("./lib/twilio-media-stream-save-audio-file");
+const speech = require("@google-cloud/speech");
+const { handleOpenAIStream } = require('./services/openAI');
+const { streamTTS } = require('./services/googleTTS');
 
-const mediaStreamSaver = new TwilioMediaStreamSaveAudioFile({
-  saveLocation: __dirname,
-  saveFilename: "my-twilio-media-stream-output",
-  onSaved: () => console.log("File was saved!"),
-});
+const client = new speech.SpeechClient();
+
+// Add these required packages at the top of your file
+const { Transform } = require('stream');
+const wav = require('wav');
+const mulaw = require('mu-law');
 
 
-
-// WebSocket logic
-module.exports = function(server) {
+module.exports = function (server) {
   const wss = new WebSocket.Server({ server });
-
-  wss.on("start", (ws) => {
-    console.log("Received Start event from Twilio");
-  });
 
   wss.on("connection", (ws) => {
     console.log("Twilio connected to WebSocket");
-    let audioBuffer = [];
-    let hasTranscriptionBeenSent = false;
 
-    const saveRawAudio = () => {
-      const rawAudioFilePath = path.join(__dirname, 'audio_output.raw');
-      const audioData = Buffer.concat(audioBuffer);
+    let conversationHistory = "";
+    let inactivityTimeout;
+    let streamSid; // Variable to store the stream SID
 
-      // Save the audio buffer to a file
-      fs.writeFileSync(rawAudioFilePath, audioData);
-      console.log(`Audio saved to: ${rawAudioFilePath}`);
-      
-      return rawAudioFilePath;
+    // Configure Google Speech-to-Text Streaming Request
+    const request = {
+      config: {
+        encoding: "MULAW",
+        sampleRateHertz: 8000,
+        languageCode: "en-IN",
+        enableAutomaticPunctuation: true,
+      },
+      interimResults: true,
+      singleUtterance: false,
     };
 
-    const sendForTranscription = async () => {
-      if (hasTranscriptionBeenSent) {
-        return; // Prevent multiple calls to transcription
-      }
-      hasTranscriptionBeenSent = true; // Set the flag to true after the first call
-      
-      console.log(audioBuffer.length, "audioBuffer.length")
-      if (audioBuffer.length === 0) {
-        console.log("No audio to process.");
-        return;
-      }
 
-      try {
-        const rawAudioFilePath = saveRawAudio(); // Save raw audio before transcription
-        convertToWav(rawAudioFilePath, (wavFilePath) => {
-          console.log(`WAV file saved at: ${wavFilePath}`);
-        });
+    const recognizeStream = client
+      .streamingRecognize(request)
+      .on("data", async (data) => {
+        if (data.results[0] && data.results[0].alternatives[0]) {
+          const transcription = data.results[0].alternatives[0].transcript;
+          const isFinal = data.results[0].isFinal;
 
-        const audioBytes = Buffer.concat(audioBuffer).toString('base64');
-        const { transcribeAudio } = require('./services/googleSpeech');
-        const transcription = await transcribeAudio(audioBytes);
+          console.log(`Transcription: ${transcription}`);
+          if (isFinal) {
+            clearTimeout(inactivityTimeout);
+            await processTranscription(transcription);
+          } else {
+            resetInactivityTimeout(transcription);
+          }
+        }
+      })
+      .on("error", (error) => {
+        console.error("Google Speech-to-Text error:", error);
+      })
+      .on("end", () => {
+        console.log("Google Speech-to-Text streaming ended.");
+      });
 
-        console.log(`Transcription: ${transcription}`);
-      } catch (error) {
-        console.error("Error processing audio:", error);
-      } finally {
-        audioBuffer = [];
-      }
-    };
 
     ws.on("message", (message) => {
-      try {
-        const data = JSON.parse(message.toString('utf8'));
+      const data = JSON.parse(message.toString("utf8"));
 
-        if (data.event === "connected") {
-          console.log("Media WS: Connected event received", data);
-        }
+      if (data.event === "start") {
+        // Capture streamSid from the start event
+        streamSid = data.streamSid;
+        console.log(`Stream started with streamSid: ${streamSid}`);
+      }
 
-        if (data.event === "start") {
-          console.log("Media WS: Start event received", data);
-          mediaStreamSaver.twilioStreamStart();
-        }
+      if (data.event === "media") {
+        const audioChunk = Buffer.from(data.media.payload, "base64");
+        recognizeStream.write(audioChunk);
+      }
 
-        if (data.event === "media") {
-          // Process only media events
-          console.log(`Received audio chunk of size: ${data.media.payload.length} bytes`);
-          audioBuffer.push(Buffer.from(data.media.payload, 'base64'));  // Decode and buffer the media
-          mediaStreamSaver.twilioStreamMedia(data.media.payload);
-        }
-
-        if (data.event === "stop") {
-          console.log("Media WS: Stop event received", data);
-          mediaStreamSaver.twilioStreamStop();
-          sendForTranscription();  // Transcribe when stop event occurs
-        }
-      } catch (error) {
-        console.error("Error processing WebSocket message:", error);
+      if (data.event === "stop") {
+        console.log("Media WS: Stop event received, ending Google stream.");
+        recognizeStream.end();
       }
     });
 
     ws.on("close", () => {
       console.log("WebSocket connection closed");
-      if (audioBuffer.length > 0) {
-        sendForTranscription();
-      }
+      recognizeStream.end();
+      clearTimeout(inactivityTimeout);
     });
 
     ws.on("error", (error) => {
       console.error("WebSocket error:", error);
     });
+
+    function resetInactivityTimeout(transcription) {
+      clearTimeout(inactivityTimeout);
+      inactivityTimeout = setTimeout(async () => {
+        console.log("No new transcription for 1 second, processing...");
+        await processTranscription(transcription);
+      }, 500);
+    }
+
+    async function processTranscription(transcription) {
+      conversationHistory += `User: ${transcription}\n`;
+
+      const openAIResponse = await handleOpenAIStream(conversationHistory);
+      console.log(`OpenAI Response: ${openAIResponse}`);
+
+      conversationHistory += `Assistant: ${openAIResponse}\n`;
+
+      // Generate TTS audio for the OpenAI response
+      const audioContent = await streamTTS(openAIResponse);
+
+      // Send the audio content directly to Twilio via WebSocket
+      streamAudioToTwilio(audioContent);
+    }
+
+    function streamAudioToTwilio(audioContent, useChunks = true) {
+      const chunkSize = 320; // Each chunk represents 20 ms at 8 kHz
+      let offset = 0;
+
+      if (useChunks) {
+        // Chunked Streaming
+        function sendChunk() {
+          if (offset >= audioContent.length) {
+            console.log("Finished streaming TTS audio to Twilio (Chunked)");
+
+            // Send a "mark" event to signal the end of the audio stream
+            const markMessage = {
+              event: "mark",
+              streamSid: streamSid,
+              mark: { name: "End of response" },
+            };
+            console.log(`[${new Date().toISOString()}] Sending mark event (Chunked)`);
+            ws.send(JSON.stringify(markMessage));
+            return;
+          }
+
+          const audioChunk = audioContent.slice(offset, offset + chunkSize).toString("base64");
+          const mediaMessage = {
+            event: "media",
+            streamSid: streamSid,
+            media: {
+              payload: audioChunk,
+            },
+          };
+
+          // Log timestamp and send chunk
+          console.log(`[${new Date().toISOString()}] Sending audio chunk`);
+          ws.send(JSON.stringify(mediaMessage));
+
+          offset += chunkSize;
+          setTimeout(sendChunk, 20); // 20ms delay to simulate real-time playback
+        }
+
+        sendChunk();
+      } else {
+        // Non-Chunked Streaming
+        const audioChunk = audioContent.toString("base64");
+        const mediaMessage = {
+          event: "media",
+          streamSid: streamSid,
+          media: {
+            payload: audioChunk,
+          },
+        };
+
+        // Log timestamp and send full audio content
+        console.log(`[${new Date().toISOString()}] Sending full audio content`);
+        ws.send(JSON.stringify(mediaMessage), (error) => {
+          if (error) {
+            console.error("Error sending audio to Twilio:", error);
+          } else {
+            console.log("Sent full audio content to Twilio (Non-Chunked)");
+
+            // Send a "mark" event to indicate the end of the audio stream
+            const markMessage = {
+              event: "mark",
+              streamSid: streamSid,
+              mark: { name: "End of response" },
+            };
+            console.log(`[${new Date().toISOString()}] Sending mark event (Non-Chunked)`);
+            ws.send(JSON.stringify(markMessage));
+          }
+        });
+      }
+    }
+
   });
-
-  const convertToWav = (rawAudioFilePath, callback) => {
-    const wavFilePath = path.join(__dirname, 'output.wav');
-
-    ffmpeg(rawAudioFilePath)
-      .inputFormat('mulaw') // Set to 'mulaw' if using Twilio PCMU format
-      .audioCodec('pcm_s16le') // Convert to PCM 16-bit for WAV
-      .output(wavFilePath)
-      .on('end', () => {
-        console.log('Conversion to WAV completed.');
-        callback(wavFilePath);
-      })
-      .on('error', (err) => {
-        console.error('Error during conversion:', err);
-      })
-      .run();
-  };
 };
