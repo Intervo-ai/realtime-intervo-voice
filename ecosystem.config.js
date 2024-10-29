@@ -4,7 +4,7 @@ module.exports = {
     {
       name: "twilio",
       script: "server.js",
-      watch: false, // Automatically restart on file change
+      watch: true, // Automatically restart on file change
        ignore_watch: ["./public", "logs"], // Ignore 'public' and 'logs' directories
       watch_options: {
         followSymlinks: false,
