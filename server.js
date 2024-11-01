@@ -10,7 +10,7 @@ const path = require("path");
 const mongoose = require("mongoose");
 const session = require("express-session");
 const connectDB = require('./config/dbConfig');
-
+const cookieParser = require('cookie-parser');
 
 const passport = require("./config/passportConfig");
 
@@ -18,9 +18,12 @@ const app = express();
 const port = process.env.PORT || 3003;
 
 const corsOptions = {
-  origin: ["https://staging.cdsn.me", "http://localhost:3000"], // Replace with your frontend URL (in production, this would be your actual domain)
-  credentials: true, // This allows cookies and authorization headers to be sent across origins
-};
+  origin: 'http://localhost:3000', // Your frontend URL
+  credentials: true, // Important for cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ["Set-Cookie"] 
+}
 
 
 const apiLogger = (req, res, next) => {
@@ -42,12 +45,16 @@ const apiLogger = (req, res, next) => {
   next();
 };
 
+
+
 app.use(cors(corsOptions));
 app.options('*', cors()); // Handle preflight requests
+app.use(cookieParser()); // Add this line
 
 // Use the middleware
 app.use(apiLogger);
 // Middleware
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 // Twilio credentials
 const accountSid = process.env.TWILIO_ACCOUNT_SID;

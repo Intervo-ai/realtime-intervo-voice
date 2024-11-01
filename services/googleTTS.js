@@ -5,7 +5,7 @@ const ttsClient = new TextToSpeechClient();
 async function streamTTS(text, ws, streamSid, useChunks = true) {
   const request = {
     input: { text: text },
-    voice: { languageCode: "en-US", ssmlGender: "NEUTRAL" },
+    voice: { languageCode: "en-US", name: "en-US-Neural2-F" },
     audioConfig: {
       audioEncoding: "MULAW",
       sampleRateHertz: 8000,

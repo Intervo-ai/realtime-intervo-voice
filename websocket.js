@@ -3,8 +3,9 @@ const speech = require("@google-cloud/speech");
 const { handleOpenAIStream } = require('./services/openAI');
 const { streamTTS } = require('./services/googleTTS');
 const { streamTTSWithPolly } = require('./services/pollyTTS');
-
+const jwt = require('jsonwebtoken');
 const client = new speech.SpeechClient();
+const cookie = require('cookie');
 
 module.exports = function (server) {
   const wss = new WebSocket.Server({ server });
@@ -13,9 +14,45 @@ module.exports = function (server) {
     const startTime = Date.now();
     return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`;
   }
+wss.on("connection", (ws, req) => {
+  console.log("Twilio connected to WebSocket");
 
-  wss.on("connection", (ws) => {
-    console.log("Twilio connected to WebSocket");
+  // Extract the path and query parameters from the request URL
+  const [path, queryString] = req.url.split("?");
+  const params = new URLSearchParams(queryString);
+  const type = params.get("type");
+
+    console.log("Twilio connected to WebSocket", "Client:" + type||"Twilio");
+
+  if (type === "client") {
+    // Client connection - requires authentication
+    const cookies = cookie.parse(req.headers.cookie || '');
+    const { authToken } = cookies;
+    if (!authToken) {
+      ws.close(1008, "Authentication token missing");
+      return;
+    }
+
+    try {
+      // Verify the token
+      const decoded = jwt.verify(authToken, process.env.NEXTAUTH_SECRET);
+      console.log("Authenticated user:", decoded);
+    } catch (error) {
+      console.log(error, authToken, "error");
+      ws.close(1008, "Invalid authentication token");
+      return;
+    }
+
+    // Handle WebSocket connection for client type
+    ws.on("close", () => {
+      console.log("WebSocket connection closed for client");
+    });
+
+    ws.on("error", (error) => {
+      console.error("WebSocket error for client:", error);
+    });
+  } else {
+    // Twilio connection
     const timer = startTimer();
     console.log(`[${timer()}] WebSocket connection established`);
 
@@ -46,6 +83,14 @@ module.exports = function (server) {
             const isFinal = data.results[0].isFinal;
 
             console.log(`[${timer()}] Transcription received: ${transcription}`);
+            
+            // Send transcription to clients
+            wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN && client !== ws) {
+                client.send(JSON.stringify({ event: "transcription", source:"user", text: transcription }));
+              }
+            });
+
             if (isFinal) {
               clearTimeout(inactivityTimeout);
               await processTranscription(transcription);
@@ -85,12 +130,33 @@ module.exports = function (server) {
 
       if (data.event === "stop") {
         console.log(`[${timer()}] Media WS: Stop event received, ending Google stream.`);
+        // Send conversation summary to clients
+        async function sendConversationSummary() {
+          console.log("Sending conversation summary to clients", conversationHistory);
+          if (conversationHistory) {
+            const summaryPrompt = `Please provide a brief summary of this conversation:\n${conversationHistory}`;
+            const summary = await handleOpenAIStream(summaryPrompt);
+            
+            wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN && client !== ws) {
+                client.send(JSON.stringify({
+                  event: "summary", 
+                  text: summary
+                }));
+              }
+            });
+            console.log(`[${timer()}] Conversation summary sent to clients: "${summary}"`);
+          }
+        }
+        
+        sendConversationSummary();
         recognizeStream.end();
       }
     });
 
     ws.on("close", () => {
       console.log(`[${timer()}] WebSocket connection closed`);
+      // Create a summary and send it to the
       recognizeStream.end();
       clearTimeout(inactivityTimeout);
     });
@@ -121,6 +187,17 @@ module.exports = function (server) {
 
       conversationHistory += `Assistant: ${transcriptionResponse}\n`;
 
+      // Send OpenAI response to clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN && client !== ws) {
+          client.send(JSON.stringify({ 
+            event: "transcription", 
+            text: transcriptionResponse,
+            source: "ai" // Identifies this message is from the AI assistant
+          }));
+        }
+      });
+
       console.log(`[${timer()}] Starting TTS processing for OpenAI response`);
 
       if (isProcessingTTS) {
@@ -145,8 +222,11 @@ module.exports = function (server) {
 
         recognizeStream.end(); // End current stream after TTS completes
         console.log(`[${timer()}] Ready to process new transcriptions, restarting stream`);
-        recognizeStream =  createRecognizeStream(); // Restart new transcription stream
+        recognizeStream = createRecognizeStream(); // Restart new transcription stream
       }
     }
-  });
+  }
+});
+
+
 };
