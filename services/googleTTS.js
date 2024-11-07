@@ -2,13 +2,17 @@ const WebSocket = require("ws");
 const { TextToSpeechClient } = require("@google-cloud/text-to-speech");
 const ttsClient = new TextToSpeechClient();
 
-async function streamTTS(text, ws, streamSid, useChunks = true) {
+async function streamTTS(text, ws, streamSid, nearEndCallback, useChunks = true) {
   const request = {
     input: { text: text },
-    voice: { languageCode: "en-US", name: "en-US-Neural2-F" },
+    voice: { languageCode: "en-US", name: "en-US-Studio-O" },
     audioConfig: {
       audioEncoding: "MULAW",
       sampleRateHertz: 8000,
+      speakingRate: 1.2,        // Speed (0.25 to 4.0) - 1.0 is normal speed
+      pitch: 0.0,               // Pitch (-20.0 to 20.0) - 0.0 is normal pitch
+      volumeGainDb: 0.0,        // Volume (-96.0 to 16.0) - 0.0 is normal volume
+      effectsProfileId: ["telephony-class-application"]  // Optimizes for phone calls
     },
   };
 
@@ -25,10 +29,20 @@ async function streamTTS(text, ws, streamSid, useChunks = true) {
           console.error(`[${new Date().toISOString()}] Error sending mark event:`, error);
           reject(error);
         } else {
+          console.log(`[${new Date().toISOString()}] Sent mark event`);
           resolve(); // Complete the promise
         }
       });
     };
+
+    const totalDuration = (audioContent.length / 8000) * 1000; // Total duration in milliseconds
+
+    // Set up near-end callback 500 ms before the audio ends
+    setTimeout(() => {
+      if (nearEndCallback && typeof nearEndCallback === "function") {
+        nearEndCallback(); // Notify the caller that TTS is about to finish
+      }
+    }, totalDuration - 500);
 
     if (useChunks) {
       let offset = 0;
@@ -36,7 +50,15 @@ async function streamTTS(text, ws, streamSid, useChunks = true) {
       function sendChunk() {
         if (offset >= audioContent.length) {
           console.log(`[${new Date().toISOString()}] Finished streaming TTS audio (Chunked)`);
-          sendMarkEvent(); // End the stream
+          
+          // Wait for the full audio duration before resolving
+          setTimeout(() => {
+            if (nearEndCallback && typeof nearEndCallback === "function") {
+              nearEndCallback();
+            }
+            sendMarkEvent();
+            resolve(); // Only resolve after audio has finished playing
+          }, totalDuration + 500); // Add small buffer
           return;
         }
 
@@ -56,7 +78,9 @@ async function streamTTS(text, ws, streamSid, useChunks = true) {
         }
 
         offset += chunkSize;
-        setImmediate(sendChunk); // Schedules next chunk immediately
+        // Add delay between chunks based on audio duration
+        const chunkDuration = (chunkSize / 8000) * 1000; // Convert to milliseconds
+        setTimeout(sendChunk, chunkDuration);
       }
 
       sendChunk(); // Start chunked streaming

@@ -8,12 +8,6 @@ const jwt = require('jsonwebtoken');
 const client = new speech.SpeechClient();
 const cookie = require('cookie');
 const { handleAIFlowStream } = require("./services/ai-flow");
-const OrchestrationManager  = require('./services/OrchestrationManager');
-const { IntentClassifierAgent } = require('./agents/IntentClassifierAgent');
-const { QuickResponseAgent } = require('.//agents/QuickResponseAgent');
-const { RAGAgent } = require('./agents/RAGAgent');
-const { SummaryAgent } = require('./agents/SummaryAgent');
-
 
 module.exports = function (server) {
   const wss = new WebSocket.Server({ server });
@@ -21,7 +15,8 @@ module.exports = function (server) {
   function startTimer() {
     const startTime = Date.now();
     return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`;
-}
+  }
+
 wss.on("connection", (ws, req) => {
   console.log("Twilio connected to WebSocket");
 
@@ -79,28 +74,16 @@ wss.on("connection", (ws, req) => {
         config: {
           encoding: "MULAW",
           sampleRateHertz: 8000,
-          languageCode: "en-US",
+          languageCode: "en-IN",
           enableAutomaticPunctuation: false,
-          useEnhanced: true,
-          model: "phone_call",
         },
-        speechContexts: [{
-          phrases: [
-            "CodeDesign",
-              "CodeDesign.ai",
-              "Hey",
-              "hai",
-              // Add more phrases here
-            ],
-            boost: 20  // Boost value between 0 and 20
-          }],
+        interimResults: true,
+        singleUtterance: true,
       };
       console.log("Creating recognize stream");
 
       const recognizeStream = client.streamingRecognize(request)
         .on("data", async (data) => {
-          console.log("Recognize stream data 0 ");
-
           if (ignoreNewTranscriptions || isProcessingTTS) return;
           console.log("Recognize stream data", ignoreNewTranscriptions);
 
@@ -156,41 +139,22 @@ wss.on("connection", (ws, req) => {
 
       if (data.event === "stop") {
         console.log(`[${timer()}] Media WS: Stop event received, ending Google stream.`);
-        
         // Send conversation summary to clients
         async function sendConversationSummary() {
           console.log("Sending conversation summary to clients", conversationHistory);
           if (conversationHistory) {
-            // Create a new orchestrator just for summary
-            const summaryOrchestrator = new OrchestrationManager();
+            const summaryPrompt = `Please provide a brief summary of this conversation:\n${conversationHistory}`;
+            const summary = await handleOpenAIStream(summaryPrompt);
             
-            // Register summary agent
-            summaryOrchestrator.registerAgent(new SummaryAgent({
-              aiService: 'openai',
-              aiConfig: {
-                temperature: 0.3,
-                maxTokens: 200
-              }
-            }));
-
-            // Register response handler for summary
-            summaryOrchestrator.onResponse({
-              type: 'general',
-              callback: (response) => {
-                wss.clients.forEach((client) => {
-                  if (client.readyState === WebSocket.OPEN && client !== ws) {
-                    client.send(JSON.stringify({
-                      event: "summary", 
-                      text: response.text
-                    }));
-                  }
-                });
-                console.log(`[${timer()}] Conversation summary sent to clients: "${response.text}"`);
+            wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN && client !== ws) {
+                client.send(JSON.stringify({
+                  event: "summary", 
+                  text: summary
+                }));
               }
             });
-
-            // Process the conversation history
-            await summaryOrchestrator.process(conversationHistory);
+            console.log(`[${timer()}] Conversation summary sent to clients: "${summary}"`);
           }
         }
         
@@ -215,7 +179,7 @@ wss.on("connection", (ws, req) => {
       inactivityTimeout = setTimeout(async () => {
         console.log(`[${timer()}] No new transcription for 1 second, processing...`);
         await processTranscription(transcription);
-      }, 100);
+      }, 500);
     }
 
     async function processTranscription(transcription) {
@@ -224,95 +188,56 @@ wss.on("connection", (ws, req) => {
       ignoreNewTranscriptions = true;
       recognizeStream.pause();
 
-      // Initialize orchestration
-      const orchestrator = new OrchestrationManager();
-      
-      // Register agents
-      orchestrator.registerAgent(new IntentClassifierAgent({
-        aiService: 'groq',
-        aiConfig: {
-          temperature: 0.1 // Low temperature for consistent classification
-        }
-      }));
+      conversationHistory += `User: ${transcription}\n. .`;
 
-      orchestrator.registerAgent(new QuickResponseAgent({
-        aiService: 'groq',
-        aiConfig: {
-          temperature: 0.7,
-          maxTokens: 100 // Keep responses short
-        }
-      }));
+      console.log(`[${timer()}] Sending request to OpenAI`);
+      // const transcriptionResponse = await handleAIFlowStream(conversationHistory);
+      // const transcriptionResponse = await handleOpenAIStream(conversationHistory);
+      const transcriptionResponse = await handleGroqStream(conversationHistory);
+      console.log(`[${timer()}] Received response from OpenAI: "${transcriptionResponse}"`);
 
-      orchestrator.registerAgent(new RAGAgent({
-        aiService: 'aiflow',
-        aiConfig: {
-          temperature: 0.7
-        }
-      }));
+      conversationHistory += `Assistant: ${transcriptionResponse}\n`;
 
-      // Add to conversation history
-      conversationHistory += `User: ${transcription}\n`;
-
-      // Register general response handler (for UI updates)
-      orchestrator.onResponse({
-        type: 'general',
-        callback: (response) => {
-          // Add to conversation history
-          conversationHistory += `${response.agent}: ${response.text}\n`;
-
-          // Send to WebSocket clients
-          wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN && client !== ws) {
-              client.send(JSON.stringify({ 
-                event: "transcription", 
-                text: response.text,
-                source: response.agent,
-                priority: response.priority
-              }));
-            }
-          });
+      // Send OpenAI response to clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN && client !== ws) {
+          client.send(JSON.stringify({ 
+            event: "transcription", 
+            text: transcriptionResponse,
+            source: "ai" // Identifies this message is from the AI assistant
+          }));
         }
       });
 
-      // Register TTS-specific handler
-      orchestrator.onResponse({
-        type: 'tts',
-        callback: async (response) => {
-          const useGoogle = true;
-          const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
+      console.log(`[${timer()}] Starting TTS processing for OpenAI response`);
 
-          try {
-            // Convert callback-style TTS to Promise
-            await new Promise((resolve, reject) => {
-              ttsFunction(response.text, ws, streamSid, () => {
-                console.log(`[${timer()}] TTS completed for: ${response.agent}`);
-                // Add a small delay after completion before resolving
-                setTimeout(() => {
-                  console.log(`[${timer()}] TTS fully completed, ready for next response`);
-                  resolve();
-                }, 500); // 1 second delay
-              }, true).catch(reject);
-            });
-          } catch (error) {
-            console.error("Error in TTS processing:", error);
-            throw error;
-          }
-        }
-      });
+      if (isProcessingTTS) {
+        console.log(`[${timer()}] Waiting for current TTS to finish...`);
+        return;
+      }
+
+      isProcessingTTS = true;
+
+      const useGoogle = true;
+      const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
 
       try {
+        await ttsFunction(transcriptionResponse, ws, streamSid, () => {
+          console.log(`[${timer()}] TTS is almost done`);
+          isProcessingTTS = false;
+        }, true);
+        console.log(`[${timer()}] TTS processing completed`);
 
-      
-        // Process the transcription through all agents
-        await orchestrator.process(transcription);
       } catch (error) {
-        console.error("Error in orchestration:", error);
+        console.error("Error in TTS processing:", error);
       } finally {
-        // Reset state
+        console.log("finally block executed");
+        isProcessingTTS = false;
         ignoreNewTranscriptions = false;
-        recognizeStream.end();
-        console.log(`[${timer()}] Ready for new transcriptions, restarting stream`);
-        recognizeStream = createRecognizeStream();
+
+        recognizeStream.end(); // End current stream after TTS completes
+        console.log(`[${timer()}] Ready to process new transcriptions, restarting stream`);
+        recognizeStream = createRecognizeStream(); // Restart new transcription stream
       }
     }
   }

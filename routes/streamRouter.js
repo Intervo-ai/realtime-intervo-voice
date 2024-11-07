@@ -12,7 +12,7 @@ router.post("/", (req, res) => {
   const response = new VoiceResponse();
 
   // Say something to the caller first
-  response.say("Welcome! How can I assist you today?");
+  response.say("Welcome!");
   
   // Use 'connect' instead of 'start' for bidirectional media streaming
   const connect = response.connect();

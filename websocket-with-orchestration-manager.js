@@ -81,19 +81,9 @@ wss.on("connection", (ws, req) => {
           sampleRateHertz: 8000,
           languageCode: "en-US",
           enableAutomaticPunctuation: false,
-          useEnhanced: true,
-          model: "phone_call",
         },
-        speechContexts: [{
-          phrases: [
-            "CodeDesign",
-              "CodeDesign.ai",
-              "Hey",
-              "hai",
-              // Add more phrases here
-            ],
-            boost: 20  // Boost value between 0 and 20
-          }],
+        singleUtterance: true,
+        interimResults: true,
       };
       console.log("Creating recognize stream");
 
@@ -278,24 +268,23 @@ wss.on("connection", (ws, req) => {
       orchestrator.onResponse({
         type: 'tts',
         callback: async (response) => {
+          if (isProcessingTTS) {
+            console.log(`[${timer()}] Waiting for current TTS to finish...`);
+            return;
+          }
+
+          isProcessingTTS = true;
           const useGoogle = true;
           const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
 
           try {
-            // Convert callback-style TTS to Promise
-            await new Promise((resolve, reject) => {
-              ttsFunction(response.text, ws, streamSid, () => {
-                console.log(`[${timer()}] TTS completed for: ${response.agent}`);
-                // Add a small delay after completion before resolving
-                setTimeout(() => {
-                  console.log(`[${timer()}] TTS fully completed, ready for next response`);
-                  resolve();
-                }, 500); // 1 second delay
-              }, true).catch(reject);
-            });
+            await ttsFunction(response.text, ws, streamSid, () => {
+              console.log(`[${timer()}] TTS completed for: ${response.agent}`);
+              isProcessingTTS = false;
+            }, true);
           } catch (error) {
             console.error("Error in TTS processing:", error);
-            throw error;
+            isProcessingTTS = false;
           }
         }
       });
