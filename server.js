@@ -116,7 +116,7 @@ app.use("/user", userRouter);
 const server = http.createServer(app);
 
 // Import WebSocket logic from separate file
-require('./websocket')(server);
+require('./streamSocket')(server);
 
 // Start the server
 server.listen(port, () => {

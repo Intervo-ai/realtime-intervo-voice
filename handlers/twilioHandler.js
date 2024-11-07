@@ -1,66 +1,17 @@
 const WebSocket = require("ws");
 const speech = require("@google-cloud/speech");
-const { handleOpenAIStream } = require('./services/openAI');
-const { streamTTS } = require('./services/googleTTS');
-const { streamTTSWithPolly } = require('./services/pollyTTS');
-const { handleGroqStream } = require('./services/groqAI');
-const jwt = require('jsonwebtoken');
+const { streamTTS } = require('../services/googleTTS');
+const { streamTTSWithPolly } = require('../services/pollyTTS');
 const client = new speech.SpeechClient();
-const cookie = require('cookie');
-const { handleAIFlowStream } = require("./services/ai-flow");
-const OrchestrationManager  = require('./services/OrchestrationManager');
-const { IntentClassifierAgent } = require('./agents/IntentClassifierAgent');
-const { QuickResponseAgent } = require('.//agents/QuickResponseAgent');
-const { RAGAgent } = require('./agents/RAGAgent');
-const { SummaryAgent } = require('./agents/SummaryAgent');
+const OrchestrationManager  = require('../services/OrchestrationManager');
+const { IntentClassifierAgent } = require('../agents/IntentClassifierAgent');
+const { QuickResponseAgent } = require('../agents/QuickResponseAgent');
+const { RAGAgent } = require('../agents/RAGAgent');
+const { SummaryAgent } = require('../agents/SummaryAgent');
 
 
-module.exports = function (server) {
-  const wss = new WebSocket.Server({ server });
+function handleTwilioConnection(ws, req, wss) {
 
-  function startTimer() {
-    const startTime = Date.now();
-    return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`;
-}
-wss.on("connection", (ws, req) => {
-  console.log("Twilio connected to WebSocket");
-
-  // Extract the path and query parameters from the request URL
-  const [path, queryString] = req.url.split("?");
-  const params = new URLSearchParams(queryString);
-  const type = params.get("type");
-
-    console.log("Twilio connected to WebSocket", "Client:" + type||"Twilio");
-
-    //The use of the client is jsut for the webapp. We're only sending transcriptions to the client.
-  if (type === "client") {
-    // Client connection - requires authentication
-    const cookies = cookie.parse(req.headers.cookie || '');
-    const { authToken } = cookies;
-    if (!authToken) {
-      ws.close(1008, "Authentication token missing");
-      return;
-    }
-
-    try {
-      // Verify the token
-      const decoded = jwt.verify(authToken, process.env.NEXTAUTH_SECRET);
-      console.log("Authenticated user:", decoded);
-    } catch (error) {
-      console.log(error, authToken, "error");
-      ws.close(1008, "Invalid authentication token");
-      return;
-    }
-
-    // Handle WebSocket connection for client type
-    ws.on("close", () => {
-      console.log("WebSocket connection closed for client");
-    });
-
-    ws.on("error", (error) => {
-      console.error("WebSocket error for client:", error);
-    });
-  } else {
 
     /* Twilio connection
      * This is where most of the Realtime stuff happens. Highly performance sensitive.
@@ -316,6 +267,9 @@ wss.on("connection", (ws, req) => {
       }
     }
   }
-});
-
+function startTimer() {
+  const startTime = Date.now();
+  return () => `${((Date.now() - startTime) / 1000).toFixed(2)}s`;
 }
+
+module.exports = handleTwilioConnection;
