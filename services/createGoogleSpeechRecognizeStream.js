@@ -2,25 +2,51 @@ const speech = require("@google-cloud/speech");
 const WebSocket = require("ws");
 const client = new speech.SpeechClient();
 
-function createGoogleSpeechRecognizeStream({ timer, ws, wss, ignoreNewTranscriptions, isProcessingTTS, processTranscription, resetInactivityTimeout, inactivityTimeout }) {
+function createGoogleSpeechRecognizeStream({ 
+  timer, 
+  ws, 
+  wss, 
+  ignoreNewTranscriptions, 
+  isProcessingTTS, 
+  processTranscription, 
+  resetInactivityTimeout, 
+  inactivityTimeout 
+}) {
   const request = {
     config: {
       encoding: "MULAW",
       sampleRateHertz: 8000,
-      languageCode: "en-IN",
-      enableAutomaticPunctuation: true,
+      languageCode: "en-US",
+      enableAutomaticPunctuation: false,
+      useEnhanced: true,
+      model: "phone_call",
     },
-    interimResults: false,
-    singleUtterance: true,
+    speechContexts: [{
+      phrases: [
+        "CodeDesign",
+        "CodeDesign.ai",
+        "Hey",
+        "hai",
+      ],
+      boost: 20
+    }],
   };
+  
+  console.log("Creating recognize stream");
 
   const recognizeStream = client.streamingRecognize(request)
     .on("data", async (data) => {
-      if (ignoreNewTranscriptions) return;
+      console.log("Recognize stream data 0 ");
+
+      if (ignoreNewTranscriptions || isProcessingTTS) return;
+      console.log("Recognize stream data", ignoreNewTranscriptions);
 
       if (data.results[0] && data.results[0].alternatives[0]) {
         const transcription = data.results[0].alternatives[0].transcript;
         const isFinal = data.results[0].isFinal;
+
+        // Skip empty transcriptions
+        if (!transcription.trim()) return;
 
         console.log(`[${timer()}] Transcription received: ${transcription}`);
         
@@ -46,7 +72,16 @@ function createGoogleSpeechRecognizeStream({ timer, ws, wss, ignoreNewTranscript
       console.log(`[${timer()}] Google Speech-to-Text streaming ended.`);
       if (!isProcessingTTS) {
         console.log(`[${timer()}] Restarting transcription stream after end`);
-        // createGoogleSpeechRecognizeStream({ timer, ws, wss, ignoreNewTranscriptions, isProcessingTTS, processTranscription, resetInactivityTimeout }); // Restart transcription after each end if not in TTS processing
+        return createGoogleSpeechRecognizeStream({ 
+          timer, 
+          ws, 
+          wss, 
+          ignoreNewTranscriptions, 
+          isProcessingTTS, 
+          processTranscription, 
+          resetInactivityTimeout, 
+          inactivityTimeout 
+        });
       }
     });
 

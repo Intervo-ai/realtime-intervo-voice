@@ -36,20 +36,60 @@ const ACKNOWLEDGMENTS = {
     "Fair enough",
     "I understand completely",
     "That's clear"
+  ],
+  frustrated: [
+    "I understand your frustration",
+    "I hear your concerns",
+    "Let me help address that",
+    "I apologize for the difficulty",
+    "I know this can be frustrating",
+    "Let's work through this together",
+    "I appreciate your patience",
+    "I'll help sort this out",
+    "Thank you for bringing this up",
+    "Let's find a solution"
+  ],
+};
+
+const BACKCHANNELS = {
+  happy: [
+    "Ah",
+    "Oh",
+    "Wow",
+    "Hey",
+  ],
+  neutral: [
+    "Hmm",
+    "Well",
+    "So",
+    "Let's see",
+  ],
+  casual: [
+    "Oh",
+    "Hey",
+    "Ah",
+    "Well",
+  ],
+  frustrated: [
+    "Oh",
+    "Hmm",
+    "Ah",
+    "Well",
   ]
 };
 
 const getAcknowledgment = (emotion, confidence, certainty) => {
-  // Combined score helps determine response quality
   const combinedScore = (confidence * 0.6) + (certainty * 0.4);
   
-  // If we're not very confident about the emotion or certainty, default to neutral
+  // If we're not very confident, use neutral backchannels
   if (combinedScore < 0.6) {
-    return ACKNOWLEDGMENTS.neutral[Math.floor(Math.random() * ACKNOWLEDGMENTS.neutral.length)];
+    const backchannel = BACKCHANNELS.neutral[Math.floor(Math.random() * BACKCHANNELS.neutral.length)];
+    return `${backchannel}, ${ACKNOWLEDGMENTS.neutral[Math.floor(Math.random() * ACKNOWLEDGMENTS.neutral.length)]}`;
   }
   
-  // If we're very confident, use the detected emotion
-  return ACKNOWLEDGMENTS[emotion][Math.floor(Math.random() * ACKNOWLEDGMENTS[emotion].length)];
+  // Use emotion-appropriate backchannels
+  const backchannel = BACKCHANNELS[emotion][Math.floor(Math.random() * BACKCHANNELS[emotion].length)];
+  return `${backchannel}, ${ACKNOWLEDGMENTS[emotion][Math.floor(Math.random() * ACKNOWLEDGMENTS[emotion].length)]}`;
 };
 
 class IntentClassifierAgent extends BaseAgent {

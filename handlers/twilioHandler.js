@@ -1,16 +1,31 @@
 const WebSocket = require("ws");
 const speech = require("@google-cloud/speech");
-const { streamTTS } = require('../services/googleTTS');
-const { streamTTSWithPolly } = require('../services/pollyTTS');
+const { streamTTS } = require('../services/azureTTS');
 const client = new speech.SpeechClient();
 const OrchestrationManager  = require('../services/OrchestrationManager');
 const { IntentClassifierAgent } = require('../agents/IntentClassifierAgent');
 const { QuickResponseAgent } = require('../agents/QuickResponseAgent');
 const { RAGAgent } = require('../agents/RAGAgent');
 const { SummaryAgent } = require('../agents/SummaryAgent');
-
+const createGoogleSpeechRecognizeStream = require('../services/createGoogleSpeechRecognizeStream');
+// const createAzureSpeechRecognizeStream = require('../services/createAzureSpeechRecognizeStream');
 
 function handleTwilioConnection(ws, req, wss) {
+
+     // Parse URL parameters
+    const urlParams = new URLSearchParams(req.url.split('?')[1]);
+    
+    // Extract configuration parameters
+    const config = {
+        sttService: urlParams.get('sttService'),
+        aiEndpoint: urlParams.get('aiEndpoint'),
+        ttsService: urlParams.get('ttsService'),
+        voiceType: urlParams.get('voiceType'),
+        leadPrompt: urlParams.get('leadPrompt'),
+        introduction: urlParams.get('introduction')
+    };
+
+    console.log('Received configuration:', config);
 
 
     /* Twilio connection
@@ -25,72 +40,16 @@ function handleTwilioConnection(ws, req, wss) {
     let isProcessingTTS = false;
     let ignoreNewTranscriptions = false;
 
-    function createRecognizeStream() {
-      const request = {
-        config: {
-          encoding: "MULAW",
-          sampleRateHertz: 8000,
-          languageCode: "en-US",
-          enableAutomaticPunctuation: false,
-          useEnhanced: true,
-          model: "phone_call",
-        },
-        speechContexts: [{
-          phrases: [
-            "CodeDesign",
-              "CodeDesign.ai",
-              "Hey",
-              "hai",
-              // Add more phrases here
-            ],
-            boost: 20  // Boost value between 0 and 20
-          }],
-      };
-      console.log("Creating recognize stream");
-
-      const recognizeStream = client.streamingRecognize(request)
-        .on("data", async (data) => {
-          console.log("Recognize stream data 0 ");
-
-          if (ignoreNewTranscriptions || isProcessingTTS) return;
-          console.log("Recognize stream data", ignoreNewTranscriptions);
-
-          if (data.results[0] && data.results[0].alternatives[0]) {
-            const transcription = data.results[0].alternatives[0].transcript;
-            const isFinal = data.results[0].isFinal;
-
-            console.log(`[${timer()}] Transcription received: ${transcription}`);
-            
-            // Send transcription to clients
-            wss.clients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN && client !== ws) {
-                client.send(JSON.stringify({ event: "transcription", source:"user", text: transcription }));
-              }
-            });
-
-            if (isFinal) {
-              clearTimeout(inactivityTimeout);
-              await processTranscription(transcription);
-            } else {
-              resetInactivityTimeout(transcription);
-            }
-          }
-        })
-        .on("error", (error) => {
-          console.error(`[${timer()}] Google Speech-to-Text error:`, error);
-        })
-        .on("end", () => {
-          console.log(`[${timer()}] Google Speech-to-Text streaming ended.`);
-          if (!isProcessingTTS) {
-            console.log(`[${timer()}] Restarting transcription stream after end`);
-            createRecognizeStream(); // Restart transcription after each end if not in TTS processing
-          }
-        });
-
-      return recognizeStream;
-    }
-
-    let recognizeStream = createRecognizeStream();
+    let recognizeStream = createGoogleSpeechRecognizeStream({
+      timer,
+      ws,
+      wss,
+      ignoreNewTranscriptions,
+      isProcessingTTS,
+      processTranscription,
+      resetInactivityTimeout,
+      inactivityTimeout
+    });
 
     ws.on("message", (message) => {
       const data = JSON.parse(message.toString("utf8"));
@@ -241,7 +200,7 @@ function handleTwilioConnection(ws, req, wss) {
                 setTimeout(() => {
                   console.log(`[${timer()}] TTS fully completed, ready for next response`);
                   resolve();
-                }, 500); // 1 second delay
+                }, 0); // 1 second delay
               }, true).catch(reject);
             });
           } catch (error) {
@@ -263,7 +222,16 @@ function handleTwilioConnection(ws, req, wss) {
         ignoreNewTranscriptions = false;
         recognizeStream.end();
         console.log(`[${timer()}] Ready for new transcriptions, restarting stream`);
-        recognizeStream = createRecognizeStream();
+        recognizeStream = createGoogleSpeechRecognizeStream({
+          timer,
+          ws,
+          wss,
+          ignoreNewTranscriptions,
+          isProcessingTTS,
+          processTranscription,
+          resetInactivityTimeout,
+          inactivityTimeout
+        });
       }
     }
   }

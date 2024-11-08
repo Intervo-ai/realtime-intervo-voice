@@ -11,25 +11,28 @@ const client = twilio(
 
 router.post("/", async (req, res) => {
   console.log("Twilio voice request received (stream)");
+  /*
+     aiConfig: '{"sttService":"google","aiEndpoint":"gpt4","ttsService":"google","voiceType":"adam","leadPrompt":"I want to collection information about the business nature of our users.","introduction":"Hey there! Thanks for getting in touch with CodeDesign.ai. How can we be of assistance."}',
+10|twilio  |   AccountSid: 'AC858b3998c6cc9215e68da2f3add3d0fa'
+10|twilio  | }
+*/
+  let aiConfig = {};
+  if (req.body?.aiConfig) {
+    aiConfig = JSON.parse(req.body?.aiConfig);
+  }
+  console.log(aiConfig, "aiConfig");
   
-  const { phoneNumber } = req.body;
+  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, voiceType } = aiConfig;
+  
   const serverDomain = "call-plugin-api.codedesign.app";
 
   // If no phone number, return TwiML for WebRTC client
   if (!phoneNumber) {
     const twiml = new VoiceResponse();
-    twiml.say('Welcome!');
+    
     const connect = twiml.connect();
     const stream = connect.stream({
-      url: `wss://${serverDomain}`,
-    });
-    stream.parameter({
-      name: 'FirstName',
-      value: 'Jane',
-    });
-    stream.parameter({
-      name: 'LastName',
-      value: 'Doe',
+      url: `wss://${serverDomain}?sttService=${encodeURIComponent(sttService)}&aiEndpoint=${encodeURIComponent(aiEndpoint)}&ttsService=${encodeURIComponent(ttsService)}&voiceType=${encodeURIComponent(voiceType)}&leadPrompt=${encodeURIComponent(leadPrompt)}&introduction=${encodeURIComponent(introduction)}`,
     });
     twiml.pause({ length: 10 });
 
@@ -46,9 +49,7 @@ router.post("/", async (req, res) => {
         <Response>
           <Say>Welcome!</Say>
           <Connect>
-            <Stream url="wss://${serverDomain}">
-              <Parameter name="FirstName" value="Jane"/>
-              <Parameter name="LastName" value="Doe"/>
+            <Stream url="wss://${serverDomain}?sttService=${encodeURIComponent(sttService)}&aiEndpoint=${encodeURIComponent(aiEndpoint)}&ttsService=${encodeURIComponent(ttsService)}&voiceType=${encodeURIComponent(voiceType)}&leadPrompt=${encodeURIComponent(leadPrompt)}&introduction=${encodeURIComponent(introduction)}">
             </Stream>
           </Connect>
           <Pause length="10"/>

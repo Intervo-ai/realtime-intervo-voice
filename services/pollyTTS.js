@@ -1,90 +1,128 @@
 require("dotenv").config();
+const WebSocket = require("ws");
 const AWS = require("aws-sdk");
-const Polly = new AWS.Polly({ region: process.env.AWS_REGION });
 
-async function streamTTSWithPolly(text, ws, streamSid, useChunks = true) {
+async function streamTTS(text, ws, streamSid, nearEndCallback, useChunks = true) {
+  const polly = new AWS.Polly({
+    signatureVersion: 'v4',
+    region: process.env.AWS_REGION
+  });
+
   const params = {
-    OutputFormat: "pcm", // Use PCM as Polly doesn't support mu-law directly
+    Engine: "neural",
+    OutputFormat: 'pcm',
+    SampleRate: '8000',
     Text: text,
-    VoiceId: "Joanna",
-    SampleRate: "8000", // Ensure sample rate is 8000 Hz for compatibility
+    TextType: 'text',
+    VoiceId: 'Joanna'
   };
 
-  const pollyStream = Polly.synthesizeSpeech(params).createReadStream();
-  const chunkSize = 320;
+  return new Promise((resolve, reject) => {
+    let audioContent = Buffer.from([]);
 
-  pollyStream.on("data", (chunk) => {
-    // Convert PCM chunk to mu-law format
-    const muLawChunk = convertPcmToMuLaw(chunk); // Convert PCM to mu-law
-
-    if (useChunks) {
-      let offset = 0;
-      while (offset < muLawChunk.length) {
-        const audioChunk = muLawChunk.slice(offset, offset + chunkSize).toString("base64");
-        const mediaMessage = {
-          event: "media",
-          streamSid: streamSid,
-          media: { payload: audioChunk },
-        };
-        ws.send(JSON.stringify(mediaMessage));
-        offset += chunkSize;
+    polly.synthesizeSpeech(params, (err, data) => {
+      if (err) {
+        console.error(`[${new Date().toISOString()}] Synthesis error:`, err);
+        reject(err);
+        return;
       }
-    } else {
-      // Non-chunked mode: send entire converted chunk at once
-      const audioChunk = muLawChunk.toString("base64");
-      ws.send(
-        JSON.stringify({
-          event: "media",
-          streamSid: streamSid,
-          media: { payload: audioChunk },
-        })
-      );
-    }
-  });
 
-  pollyStream.on("end", () => {
-    const markMessage = { event: "mark", streamSid, mark: { name: "End of response" } };
-    ws.send(JSON.stringify(markMessage));
-  });
+      const pcmBuffer = Buffer.from(data.AudioStream);
+      const mulawChunk = pcmToMulaw(pcmBuffer);
 
-  pollyStream.on("error", (error) => {
-    console.error("Polly streaming error:", error);
+      const chunkSize = 320;
+      let offset = 0;
+
+      function sendChunk() {
+        if (offset >= mulawChunk.length) {
+          console.log(`[${new Date().toISOString()}] Finished streaming TTS audio`);
+          const totalDuration = (audioContent.length / 8000) * 1000;
+          
+          setTimeout(() => {
+            if (nearEndCallback && typeof nearEndCallback === "function") {
+              nearEndCallback();
+            }
+            
+            const markMessage = { 
+              event: "mark", 
+              streamSid, 
+              mark: { name: "End of response" } 
+            };
+            
+            ws.send(JSON.stringify(markMessage), (error) => {
+              if (error) {
+                console.error(`[${new Date().toISOString()}] Error sending mark event:`, error);
+                reject(error);
+              } else {
+                console.log(`[${new Date().toISOString()}] Sent mark event`);
+                resolve();
+              }
+            });
+          }, 500);
+          
+          return;
+        }
+
+        const audioChunk = mulawChunk.slice(offset, offset + chunkSize);
+        const mediaMessage = { 
+          event: "media", 
+          streamSid, 
+          media: { payload: audioChunk.toString("base64") } 
+        };
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(mediaMessage), (error) => {
+            if (error) {
+              console.error(`[${new Date().toISOString()}] Error sending chunk:`, error);
+              reject(error);
+              return;
+            }
+          });
+        } else {
+          reject(new Error("WebSocket is closed"));
+          return;
+        }
+
+        audioContent = Buffer.concat([audioContent, audioChunk]);
+        offset += chunkSize;
+        
+        const chunkDuration = (chunkSize / 8000) * 1000;
+        setTimeout(sendChunk, chunkDuration);
+      }
+
+      sendChunk();
+    });
   });
 }
 
-module.exports = { streamTTSWithPolly };
-
-
-
-// PCM to mu-law conversion function
-function linearToMuLaw(sample) {
-  const MULAW_MAX = 0x1FFF;
-  const BIAS = 33;
+// PCM to μ-law conversion function
+function pcmToMulaw(pcmBuffer) {
+  const mulawBuffer = Buffer.alloc(pcmBuffer.length / 2);
   
-  // Ensure the sample is within the range of signed 16-bit PCM
-  sample = Math.max(-32768, Math.min(32767, sample));
-
-  // Convert PCM 16-bit to 13-bit for mu-law encoding
-  let sign = (sample >> 8) & 0x80; // Extract sign bit
-  if (sign !== 0) sample = -sample;
-  sample += BIAS;
-
-  let exponent = 7;
-  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
-    exponent--;
+  for (let i = 0; i < pcmBuffer.length; i += 2) {
+    const sample = pcmBuffer.readInt16LE(i);
+    mulawBuffer[i / 2] = linearToMulaw(sample);
   }
   
-  let mantissa = (sample >> (exponent + 3)) & 0x0F;
-  let muLawByte = ~(sign | (exponent << 4) | mantissa);
-
-  return muLawByte & 0xFF;
+  return mulawBuffer;
 }
 
-function convertPcmToMuLaw(pcmBuffer) {
-  const muLawBuffer = Buffer.alloc(pcmBuffer.length / 2); // 8-bit mu-law encoding for each 16-bit PCM sample
-  for (let i = 0; i < pcmBuffer.length / 2; i++) {
-    const sample = pcmBuffer.readInt16LE(i * 2); // Read 16-bit sample from PCM buffer
-    muLawBuffer[i] = linearToMuLaw(sample); // Convert and store in mu-law buffer
-  }
-  return muLawBuffer;
+function linearToMulaw(sample) {
+  const MULAW_BIAS = 33;
+  const MULAW_MAX = 32767;
+  const MULAW_MIN = -32768;
+  
+  sample = Math.min(Math.max(sample, MULAW_MIN), MULAW_MAX);
+  
+  const sign = (sample < 0) ? 0x80 : 0;
+  if (sample < 0) sample = -sample;
+  
+  sample = sample + MULAW_BIAS;
+  
+  let magnitude = Math.log(1 + (255 * sample) / 32768) / Math.log(256);
+  magnitude = Math.min(magnitude * 256, 255);
+  
+  return (~(sign | Math.floor(magnitude))) & 0xFF;
 }
+
+module.exports = { streamTTS };
