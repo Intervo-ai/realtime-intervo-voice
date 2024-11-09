@@ -1,8 +1,4 @@
 const WebSocket = require("ws");
-const url = require('url'); // Add this at the top with other requires
-const speech = require("@google-cloud/speech");
-const { streamTTS } = require('../services/azureTTS');
-const client = new speech.SpeechClient();
 const OrchestrationManager  = require('../services/OrchestrationManager');
 const { IntentClassifierAgent } = require('../agents/IntentClassifierAgent');
 const { QuickResponseAgent } = require('../agents/QuickResponseAgent');
@@ -10,6 +6,8 @@ const { RAGAgent } = require('../agents/RAGAgent');
 const { SummaryAgent } = require('../agents/SummaryAgent');
 // const createAzureSpeechRecognizeStream = require('../services/createAzureSpeechRecognizeStream');
 const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
+const { getTTSService } = require('../services/ttsRouter');
+const PreCallAudioManager = require('../services/PreCallAudioManager');
 
 function extractConfig(customParameters) {
   return {
@@ -38,7 +36,7 @@ function handleTwilioConnection(ws, req, wss) {
 
    
     let recognizeStream;
-    ws.on("message", (message) => {
+    ws.on("message",async (message) => {
       const data = JSON.parse(message.toString("utf8"));
 
       if (data.event === "start") {
@@ -46,6 +44,33 @@ function handleTwilioConnection(ws, req, wss) {
         config = extractConfig(data.start.customParameters);
         console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
         console.log('Configuration from parameters:', config);
+        
+        // Play cached introduction if available
+        if (config.introduction) {
+          const cacheKey = PreCallAudioManager._generateCacheKey(
+            config.introduction,
+            config.ttsService,
+            config.voiceType
+          );
+          
+          const cachedAudio = PreCallAudioManager.getAudio(cacheKey);
+          if (cachedAudio) {
+            try {
+              // Send the cached audio directly to the WebSocket
+              ws.send(JSON.stringify({
+                event: 'media',
+                streamSid,
+                media: {
+                  payload: cachedAudio.toString('base64')
+                }
+              }));
+              console.log(`[${timer()}] Played cached introduction`);
+            } catch (error) {
+              console.error("Error playing cached introduction:", error);
+            }
+          }
+        }
+
         recognizeStream = createSpeechRecognizeStream(config, {
           timer,
           ws,
@@ -60,7 +85,7 @@ function handleTwilioConnection(ws, req, wss) {
 
       if (data.event === "media") {
         const audioChunk = Buffer.from(data.media.payload, "base64");
-        recognizeStream.write(audioChunk);
+        recognizeStream?.write(audioChunk);
       }
 
       if (data.event === "stop") {
@@ -187,8 +212,7 @@ function handleTwilioConnection(ws, req, wss) {
       orchestrator.onResponse({
         type: 'tts',
         callback: async (response) => {
-          const useGoogle = true;
-          const ttsFunction = useGoogle ? streamTTS : streamTTSWithPolly;
+          const ttsFunction = getTTSService(config.ttsService);
 
           try {
             // Convert callback-style TTS to Promise
@@ -199,7 +223,7 @@ function handleTwilioConnection(ws, req, wss) {
                 setTimeout(() => {
                   console.log(`[${timer()}] TTS fully completed, ready for next response`);
                   resolve();
-                }, 0); // 1 second delay
+                }, 0);
               }, true).catch(reject);
             });
           } catch (error) {

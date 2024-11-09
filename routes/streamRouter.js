@@ -2,12 +2,40 @@ const express = require("express");
 const router = express.Router();
 const VoiceResponse = require("twilio").twiml.VoiceResponse;
 const twilio = require('twilio');
+const PreCallAudioManager = require('../services/PreCallAudioManager');
 
 // Create Twilio client
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID,
   process.env.TWILIO_AUTH_TOKEN
 );
+
+// Add this new endpoint
+router.post("/prepare", async (req, res) => {
+  try {
+    let aiConfig = {};
+    if (req.body?.aiConfig) {
+      aiConfig = JSON.parse(req.body?.aiConfig);
+    }
+    
+    const { introduction, ttsService, voiceType } = aiConfig;
+    
+    if (introduction) {
+      await PreCallAudioManager.prepareAudio({
+        introduction,
+        ttsService,
+        voiceType
+      });
+      console.log("Audio prepared successfully");
+      res.json({ success: true });
+    } else {
+      res.json({ success: true, message: "No introduction to prepare" });
+    }
+  } catch (error) {
+    console.error("Error preparing audio:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 router.post("/", async (req, res) => {
   console.log("Twilio voice request received (stream)");
