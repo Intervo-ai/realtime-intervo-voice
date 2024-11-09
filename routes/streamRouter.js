@@ -29,12 +29,20 @@ router.post("/", async (req, res) => {
   // If no phone number, return TwiML for WebRTC client
   if (!phoneNumber) {
     const twiml = new VoiceResponse();
-    
     const connect = twiml.connect();
     const stream = connect.stream({
-      url: `wss://${serverDomain}?sttService=${encodeURIComponent(sttService)}&aiEndpoint=${encodeURIComponent(aiEndpoint)}&ttsService=${encodeURIComponent(ttsService)}&voiceType=${encodeURIComponent(voiceType)}&leadPrompt=${encodeURIComponent(leadPrompt)}&introduction=${encodeURIComponent(introduction)}`,
+      url: `wss://${serverDomain}`
     });
-    twiml.pause({ length: 10 });
+
+    // Add parameters individually
+    stream.parameter({ name: 'stt-service', value: sttService });
+    stream.parameter({ name: 'ai-endpoint', value: aiEndpoint });
+    stream.parameter({ name: 'tts-service', value: ttsService });
+    stream.parameter({ name: 'voice-type', value: voiceType });
+    stream.parameter({ name: 'lead-prompt', value: leadPrompt });
+    stream.parameter({ name: 'introduction', value: introduction });
+
+    twiml.pause({ length: 15 });
 
     res.type('text/xml');
     return res.send(twiml.toString());
@@ -49,7 +57,13 @@ router.post("/", async (req, res) => {
         <Response>
           <Say>Welcome!</Say>
           <Connect>
-            <Stream url="wss://${serverDomain}?sttService=${encodeURIComponent(sttService)}&aiEndpoint=${encodeURIComponent(aiEndpoint)}&ttsService=${encodeURIComponent(ttsService)}&voiceType=${encodeURIComponent(voiceType)}&leadPrompt=${encodeURIComponent(leadPrompt)}&introduction=${encodeURIComponent(introduction)}">
+            <Stream url="wss://${serverDomain}">
+              <Parameter name="stt-service" value="${encodeURIComponent(sttService)}"/>
+              <Parameter name="ai-endpoint" value="${encodeURIComponent(aiEndpoint)}"/>
+              <Parameter name="tts-service" value="${encodeURIComponent(ttsService)}"/>
+              <Parameter name="voice-type" value="${encodeURIComponent(voiceType)}"/>
+              <Parameter name="lead-prompt" value="${encodeURIComponent(leadPrompt)}"/>
+              <Parameter name="introduction" value="${encodeURIComponent(introduction)}"/>
             </Stream>
           </Connect>
           <Pause length="10"/>

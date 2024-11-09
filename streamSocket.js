@@ -8,11 +8,26 @@ module.exports = function (server) {
   wss.on("connection", (ws, req) => {
     console.log("New WebSocket connection");
 
-    const [path, queryString] = req.url.split("?");
-    const params = new URLSearchParams(queryString);
-    const type = params.get("type");
-
+    // Get connection type from headers
+    const type = req.headers['type'];
     console.log("Connection type:", type || "Twilio");
+
+    ws.on('message', (message) => {
+      try {
+        const msg = JSON.parse(message);
+        
+        // Handle the start message which contains the parameters
+        if (msg.event === 'start') {
+          console.log("Start message received with parameters:", msg.start);
+          // You can now access parameters like:
+          // msg.start.parameters['stt-service']
+          // msg.start.parameters['ai-endpoint']
+          // etc...
+        }
+      } catch (error) {
+        console.error("Error parsing message:", error);
+      }
+    });
 
     if (type === "client") {
       handleClientConnection(ws, req);
@@ -20,4 +35,4 @@ module.exports = function (server) {
       handleTwilioConnection(ws, req, wss);
     }
   });
-}
+};

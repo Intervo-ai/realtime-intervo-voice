@@ -1,4 +1,5 @@
 const WebSocket = require("ws");
+const url = require('url'); // Add this at the top with other requires
 const speech = require("@google-cloud/speech");
 const { streamTTS } = require('../services/azureTTS');
 const client = new speech.SpeechClient();
@@ -7,27 +8,22 @@ const { IntentClassifierAgent } = require('../agents/IntentClassifierAgent');
 const { QuickResponseAgent } = require('../agents/QuickResponseAgent');
 const { RAGAgent } = require('../agents/RAGAgent');
 const { SummaryAgent } = require('../agents/SummaryAgent');
-const createGoogleSpeechRecognizeStream = require('../services/createGoogleSpeechRecognizeStream');
 // const createAzureSpeechRecognizeStream = require('../services/createAzureSpeechRecognizeStream');
+const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
+
+function extractConfig(customParameters) {
+  return {
+    sttService: customParameters['stt-service'],
+    aiEndpoint: customParameters['ai-endpoint'],
+    ttsService: customParameters['tts-service'],
+    voiceType: customParameters['voice-type'],
+    leadPrompt: customParameters['lead-prompt'],
+    introduction: customParameters['introduction']
+  };
+}
 
 function handleTwilioConnection(ws, req, wss) {
-
-     // Parse URL parameters
-    const urlParams = new URLSearchParams(req.url.split('?')[1]);
-    
-    // Extract configuration parameters
-    const config = {
-        sttService: urlParams.get('sttService'),
-        aiEndpoint: urlParams.get('aiEndpoint'),
-        ttsService: urlParams.get('ttsService'),
-        voiceType: urlParams.get('voiceType'),
-        leadPrompt: urlParams.get('leadPrompt'),
-        introduction: urlParams.get('introduction')
-    };
-
-    console.log('Received configuration:', config);
-
-
+    let config = {};
     /* Twilio connection
      * This is where most of the Realtime stuff happens. Highly performance sensitive.
      */ 
@@ -40,23 +36,26 @@ function handleTwilioConnection(ws, req, wss) {
     let isProcessingTTS = false;
     let ignoreNewTranscriptions = false;
 
-    let recognizeStream = createGoogleSpeechRecognizeStream({
-      timer,
-      ws,
-      wss,
-      ignoreNewTranscriptions,
-      isProcessingTTS,
-      processTranscription,
-      resetInactivityTimeout,
-      inactivityTimeout
-    });
-
+   
+    let recognizeStream;
     ws.on("message", (message) => {
       const data = JSON.parse(message.toString("utf8"));
 
       if (data.event === "start") {
         streamSid = data.streamSid;
+        config = extractConfig(data.start.customParameters);
         console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
+        console.log('Configuration from parameters:', config);
+        recognizeStream = createSpeechRecognizeStream(config, {
+          timer,
+          ws,
+          wss,
+          ignoreNewTranscriptions,
+          isProcessingTTS,
+          processTranscription,
+          resetInactivityTimeout,
+          inactivityTimeout
+        });
       }
 
       if (data.event === "media") {
@@ -112,7 +111,7 @@ function handleTwilioConnection(ws, req, wss) {
     ws.on("close", () => {
       console.log(`[${timer()}] WebSocket connection closed`);
       // Create a summary and send it to the
-      recognizeStream.end();
+      recognizeStream?.end();
       clearTimeout(inactivityTimeout);
     });
 
@@ -222,7 +221,7 @@ function handleTwilioConnection(ws, req, wss) {
         ignoreNewTranscriptions = false;
         recognizeStream.end();
         console.log(`[${timer()}] Ready for new transcriptions, restarting stream`);
-        recognizeStream = createGoogleSpeechRecognizeStream({
+        recognizeStream = createSpeechRecognizeStream(config, {
           timer,
           ws,
           wss,
