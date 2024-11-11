@@ -100,14 +100,33 @@ class IntentClassifierAgent extends BaseAgent {
         temperature: 0.1,
         ...config.aiConfig
       }
-    });  
+    });
+    
+    this.conversationPhase = 'start';
+    this.customerName = config.customerName || null;
+    this.introPlayed = false;
   }
 
   async process(input) {
-    console.log("IntentClassifierAgent process");
-    const response = await this.classifyIntent(input);
-    console.log("IntentClassifierAgent response", response);
+    console.log("IntentClassifierAgent process:", this.conversationPhase);
     
+    // Initial greeting should only happen once
+    if (this.conversationPhase === 'start') {
+      this.conversationPhase = 'waitForGreeting';
+      return {
+        text: this.customerName ? `Hey ${this.customerName}` : "Hey there",
+        type: 'structured',
+        priority: 'immediate'
+      };
+    }
+    
+    // Handle other structured phases
+    if (this.conversationPhase !== 'unstructured') {
+      return await this.handleStructuredPhase(input);
+    }
+
+    // Handle unstructured phase (existing logic)
+    const response = await this.classifyIntent(input);
     return {
       type: response.isDomainRelated ? 'domain' : "",
       acknowledgment: response.isDomainRelated ? getAcknowledgment(
@@ -119,6 +138,93 @@ class IntentClassifierAgent extends BaseAgent {
       certainty: response.certainty,
       isDomainRelated: response.isDomainRelated
     };
+  }
+
+  async handleStructuredPhase(input) {
+    console.log("Current phase:", this.conversationPhase, "Input:", input);
+
+    switch(this.conversationPhase) {
+      case 'waitForGreeting':
+        if (!input.trim()) return null;
+        
+        this.conversationPhase = 'availability';
+        return {
+          type: 'structured',
+          priority: 'immediate',
+          nextAction: 'playIntro'  // Now play the introduction
+        };
+
+      case 'intro':
+        // Analyze if user is asking about identity
+        const identityResponse = await this.analyzeIdentityQuestion(input);
+        this.conversationPhase = 'availability';
+        
+        return {
+          text: identityResponse.needsIdentity ? 
+            "I'm an AI assistant calling on behalf of [Company]. Is this a good time to talk?" :
+            "Is this a good time to talk?",
+          type: 'structured',
+          priority: 'immediate'
+        };
+
+      case 'availability':
+        const timingResponse = await this.analyzeTimingResponse(input);
+        
+        if (timingResponse.isGoodTime) {
+          this.conversationPhase = 'unstructured';
+          return {
+            text: "Great! I'd like to ask you a few questions about your business.",
+            type: 'affirmative',
+            priority: 'immediate',
+            nextPhase: 'unstructured',
+            affirmative: true
+          };
+        } else {
+          return {
+            text: "I understand. When would be a better time to call back?",
+            type: 'negative',
+            priority: 'immediate',
+            nextAction: 'scheduleCallback',
+            affirmative: false
+          };
+        }
+
+      default:
+        return null;
+    }
+  }
+
+  async analyzeIdentityQuestion(input) {
+    const prompt = `
+      Determine if the user is asking about the caller's identity.
+      Input: "${input}"
+      Return JSON: {
+        "needsIdentity": boolean,
+        "confidence": number (0-1)
+      }
+    `;
+    
+    const response = await this.callAI(prompt, {
+      responseFormat: 'json'
+    });
+    return JSON.parse(response);
+  }
+
+  async analyzeTimingResponse(input) {
+    const prompt = `
+      Determine if the user indicates it's a good time to talk.
+      Input: "${input}"
+      Return JSON: {
+        "isGoodTime": boolean,
+        "confidence": number (0-1),
+        "suggestedCallback": string | null
+      }
+    `;
+    
+    const response = await this.callAI(prompt, {
+      responseFormat: 'json'
+    });
+    return JSON.parse(response);
   }
 
   async classifyIntent(input) {

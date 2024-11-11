@@ -8,7 +8,7 @@ const { SummaryAgent } = require('../agents/SummaryAgent');
 const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
 const { getTTSService } = require('../services/ttsRouter');
 const PreCallAudioManager = require('../services/PreCallAudioManager');
-
+const { v4: uuidv4 } = require('uuid');
 function extractConfig(customParameters) {
   return {
     sttService: customParameters['stt-service'],
@@ -20,8 +20,12 @@ function extractConfig(customParameters) {
   };
 }
 
+let orchestrator;
 function handleTwilioConnection(ws, req, wss) {
-    let config = {};
+    const internalConversationId = uuidv4();
+    let config = {
+      conversationId: internalConversationId
+    };
     /* Twilio connection
      * This is where most of the Realtime stuff happens. Highly performance sensitive.
      */ 
@@ -33,6 +37,7 @@ function handleTwilioConnection(ws, req, wss) {
     let streamSid;
     let isProcessingTTS = false;
     let ignoreNewTranscriptions = false;
+    let intentClassifier; // Store IntentClassifierAgent instance
 
    
     let recognizeStream;
@@ -42,33 +47,25 @@ function handleTwilioConnection(ws, req, wss) {
       if (data.event === "start") {
         streamSid = data.streamSid;
         config = extractConfig(data.start.customParameters);
+        config.conversationId = internalConversationId;
         console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
         console.log('Configuration from parameters:', config);
         
-        // Play cached introduction if available
-        if (config.introduction) {
-          const cacheKey = PreCallAudioManager._generateCacheKey(
-            config.introduction,
-            config.ttsService,
-            config.voiceType
-          );
-          
-          const cachedAudio = PreCallAudioManager.getAudio(cacheKey);
-          if (cachedAudio) {
-            try {
-              // Send the cached audio directly to the WebSocket
-              ws.send(JSON.stringify({
-                event: 'media',
-                streamSid,
-                media: {
-                  payload: cachedAudio.toString('base64')
-                }
-              }));
-              console.log(`[${timer()}] Played cached introduction`);
-            } catch (error) {
-              console.error("Error playing cached introduction:", error);
-            }
-          }
+        orchestrator = new OrchestrationManager({...config}, "initiated");
+
+        // Initialize IntentClassifier and start greeting
+        intentClassifier = new IntentClassifierAgent({
+          aiService: 'groq',
+          aiConfig: { temperature: 0.1 },
+          customerName: config.customerName,
+          conversationId: config.conversationId  // Add this line
+        });
+
+        // Send initial greeting via TTS
+        const ttsFunction = getTTSService(config.ttsService);
+        const greeting = await intentClassifier.process('');
+        if (greeting.text) {
+          await ttsFunction(greeting.text, ws, streamSid);
         }
 
         recognizeStream = createSpeechRecognizeStream(config, {
@@ -96,10 +93,9 @@ function handleTwilioConnection(ws, req, wss) {
           console.log("Sending conversation summary to clients", conversationHistory);
           if (conversationHistory) {
             // Create a new orchestrator just for summary
-            const summaryOrchestrator = new OrchestrationManager();
             
             // Register summary agent
-            summaryOrchestrator.registerAgent(new SummaryAgent({
+       const summaryOrchestrator = orchestrator.registerAgent(new SummaryAgent({
               aiService: 'openai',
               aiConfig: {
                 temperature: 0.3,
@@ -108,7 +104,7 @@ function handleTwilioConnection(ws, req, wss) {
             }));
 
             // Register response handler for summary
-            summaryOrchestrator.onResponse({
+            orchestrator.onResponse({
               type: 'general',
               callback: (response) => {
                 wss.clients.forEach((client) => {
@@ -158,17 +154,14 @@ function handleTwilioConnection(ws, req, wss) {
       ignoreNewTranscriptions = true;
       recognizeStream.pause();
 
-      // Initialize orchestration
-      const orchestrator = new OrchestrationManager();
-      
-      // Register agents
-      orchestrator.registerAgent(new IntentClassifierAgent({
-        aiService: 'groq',
-        aiConfig: {
-          temperature: 0.1 // Low temperature for consistent classification
-        }
-      }));
+      // Initialize full orchestration
 
+
+      
+      // Register the existing IntentClassifier instance
+      orchestrator.registerAgent(intentClassifier);
+
+      // Register other agents
       orchestrator.registerAgent(new QuickResponseAgent({
         aiService: 'groq',
         aiConfig: {
@@ -212,22 +205,39 @@ function handleTwilioConnection(ws, req, wss) {
       orchestrator.onResponse({
         type: 'tts',
         callback: async (response) => {
-          const ttsFunction = getTTSService(config.ttsService);
-
           try {
             // Convert callback-style TTS to Promise
             await new Promise((resolve, reject) => {
-              ttsFunction(response.text, ws, streamSid, () => {
-                console.log(`[${timer()}] TTS completed for: ${response.agent}`);
-                // Add a small delay after completion before resolving
+              console.log(response.shouldUseAudio, typeof response.audio, "response audio")
+              if (response.shouldUseAudio && response.audio) {
+                // Send audio directly to websocket
+                ws.send(JSON.stringify({
+                  event: 'media',
+                  streamSid: streamSid,
+                  media: {
+                    payload: Buffer.from(response.audio).toString('base64')
+                  }
+                }));
+                
+                // Add small delay to ensure audio is processed
                 setTimeout(() => {
-                  console.log(`[${timer()}] TTS fully completed, ready for next response`);
+                  console.log(`[${timer()}] Direct audio playback completed for: ${response.agent}`);
                   resolve();
                 }, 0);
-              }, true).catch(reject);
+              } else {
+                // Fallback to TTS if no audio available
+                const ttsFunction = getTTSService(config.ttsService);
+                ttsFunction(response.text, ws, streamSid, () => {
+                  console.log(`[${timer()}] TTS completed for: ${response.agent}`);
+                  setTimeout(() => {
+                    console.log(`[${timer()}] TTS fully completed, ready for next response`);
+                    resolve();
+                  }, 0);
+                }, true).catch(reject);
+              }
             });
           } catch (error) {
-            console.error("Error in TTS processing:", error);
+            console.error("Error in audio/TTS processing:", error);
             throw error;
           }
         }

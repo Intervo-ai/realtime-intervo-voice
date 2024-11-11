@@ -18,13 +18,14 @@ router.post("/prepare", async (req, res) => {
       aiConfig = JSON.parse(req.body?.aiConfig);
     }
     
-    const { introduction, ttsService, voiceType } = aiConfig;
+    const { introduction, ttsService, voiceType, leadPrompt } = aiConfig;
     
     if (introduction) {
       await PreCallAudioManager.prepareAudio({
         introduction,
         ttsService,
-        voiceType
+        voiceType,
+        leadPrompt
       });
       console.log("Audio prepared successfully");
       res.json({ success: true });

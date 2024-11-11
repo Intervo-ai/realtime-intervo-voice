@@ -1,9 +1,12 @@
 class OrchestrationManager {
-  constructor() {
+constructor(config) {
     this.agents = new Map();
     this.responseCallbacks = new Map();
     this.ttsQueue = [];
     this.isProcessingTTS = false;
+    this.conversationPhase = 'structured';
+    this.structuredStep = 'greeting';
+    this.config = config;
   }
 
   registerAgent(agent) {
@@ -14,12 +17,64 @@ class OrchestrationManager {
     if (!this.responseCallbacks.has(type)) {
       this.responseCallbacks.set(type, new Set());
     }
-    this.responseCallbacks.get(type).add(callback);
+    const callbacks = this.responseCallbacks.get(type);
+    if (!Array.from(callbacks).some(cb => cb.toString() === callback.toString())) {
+      callbacks.add(callback);
+    }
   }
 
   async process(input) {
+    if (this.conversationPhase === 'structured') {
+      return await this.handleStructuredPhase(input);
+    }
+    return await this.handleUnstructuredPhase(input);
+  }
 
-    console.log(input, this.agents, "OrchestrationManager")
+  async handleStructuredPhase(input) {
+    const intentClassifier = this.agents.get('intent-classifier');
+    const response = await intentClassifier.process(input);
+    const preCallAudioManager = require('./PreCallAudioManager');
+    
+
+    if (this.structuredStep === 'greeting') {
+      if (this.config.introduction) {
+        const cacheKey = preCallAudioManager._generateCacheKey(
+          this.config.introduction,
+          this.config.ttsService,
+          this.config.voiceType
+        );
+
+        const cachedAudioParts = preCallAudioManager.getAudio(cacheKey);
+        
+        await this.queueTTSResponse({
+          text: cachedAudioParts.text || "Hello! Is this a good time to talk?",
+          priority: 'immediate',
+          agent: 'intent-classifier',
+          order: 1,
+          audio: cachedAudioParts
+        });
+
+        this.structuredStep = 'availability';
+        return [response];
+      }
+    }
+    
+    if (this.structuredStep === 'availability') {
+      if (response.type === 'affirmative') {
+        
+        await this.queueTTSResponse({
+          text:  "I have a few questions about your business. Can we get started?",
+          priority: 'immediate',
+          agent: 'intent-classifier',
+          order: 1,
+        });
+        this.conversationPhase = 'unstructured';
+      }
+      return [response];
+    }
+  }
+
+  async handleUnstructuredPhase(input) {
     // Start all agent processes concurrently
     const agentPromises = new Map();
 
@@ -41,10 +96,6 @@ class OrchestrationManager {
       confidence: intentResult.confidence
     };
 
-        // Add debug logs
-    console.log('Intent Result:', intentResult);
-    console.log('Registered Agents:', Array.from(this.agents.keys()));
-    console.log('Agent Promises:', Array.from(agentPromises.keys()));
 
     // If domain question, queue acknowledgment immediately
     if (intentResult.type === 'domain') {
@@ -76,10 +127,8 @@ class OrchestrationManager {
             const agent = this.agents.get(name);
             
             // Add debug logs
-            console.log(`Processing response from ${name}:`, response);
             // Check if this agent should process based on intent
             const shouldProcess = await agent.shouldProcess(input, context);
-            console.log(`${name} shouldProcess:`, shouldProcess);
 
             
             if (shouldProcess) {
@@ -97,7 +146,6 @@ class OrchestrationManager {
         })
     );
 
-    console.log('Valid responses:', responses);
     // Queue valid responses for TTS
     const validResponses = responses.filter(r => r !== null);
     for (const response of validResponses) {
@@ -121,13 +169,7 @@ class OrchestrationManager {
   }
 
   async queueTTSResponse(response) {
-    // Add debug log
-    console.log('Queueing TTS response:', {
-      text: response.text,
-      priority: response.priority,
-      agent: response.agent,
-      order: response.order
-    });
+ 
 
     // Notify all listeners (e.g., for UI updates)
     this.notifyListeners('general', response);
@@ -135,13 +177,6 @@ class OrchestrationManager {
     // Add to TTS queue with priority and ordering
     this.ttsQueue.push(response);
     
-    // Add debug log before sorting
-    console.log('TTS Queue before sort:', this.ttsQueue.map(r => ({
-      text: r.text.substring(0, 30) + '...',
-      priority: r.priority,
-      agent: r.agent,
-      order: r.order
-    })));
     
     this.ttsQueue.sort((a, b) => {
       // Sort by priority first (immediate before delayed)
@@ -176,6 +211,7 @@ class OrchestrationManager {
         const response = this.ttsQueue.shift();
         console.log('Processing TTS:', {
           agent: response.agent,
+          hasAudio: !!response.audio,
           text: response.text.substring(0, 50) + '...'
         });
         
@@ -183,7 +219,11 @@ class OrchestrationManager {
         const callbacks = this.responseCallbacks.get('tts');
         if (callbacks) {
           for (const callback of callbacks) {
-            await callback(response);
+            // Pass both audio and text, letting the callback handle prioritization
+            await callback({
+              ...response,
+              shouldUseAudio: !!response.audio // Flag to indicate audio availability
+            });
           }
         }
         
@@ -199,7 +239,7 @@ class OrchestrationManager {
 
   notifyListeners(type, response) {
     const callbacks = this.responseCallbacks.get(type);
-     console.log(`Notifying ${type} listeners:`, {
+    console.log(`Notifying ${type} listeners:`, {
       hasCallbacks: !!callbacks,
       numberOfCallbacks: callbacks?.size || 0
     });
