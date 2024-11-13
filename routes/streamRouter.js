@@ -18,17 +18,17 @@ router.post("/prepare", async (req, res) => {
       aiConfig = JSON.parse(req.body?.aiConfig);
     }
     
-    const { introduction, ttsService, voiceType, leadPrompt } = aiConfig;
+    const { introduction, ttsService, leadPrompt } = aiConfig;
     
     if (introduction) {
-      await PreCallAudioManager.prepareAudio({
+    const audioParts =   await PreCallAudioManager.prepareAudio({
         introduction,
         ttsService,
-        voiceType,
         leadPrompt
       });
-      console.log("Audio prepared successfully");
-      res.json({ success: true });
+      const conversationId = audioParts.metadata?.conversationId;
+      console.log("Audio prepared successfully", conversationId);
+      res.json({ success: true, conversationId });
     } else {
       res.json({ success: true, message: "No introduction to prepare" });
     }
@@ -51,8 +51,9 @@ router.post("/", async (req, res) => {
   }
   console.log(aiConfig, "aiConfig");
   
-  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, voiceType } = aiConfig;
+  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId } = aiConfig;
   
+  console.log(conversationId, "conversationId");
   const serverDomain = "call-plugin-api.codedesign.app";
 
   // If no phone number, return TwiML for WebRTC client
@@ -67,9 +68,9 @@ router.post("/", async (req, res) => {
     stream.parameter({ name: 'stt-service', value: sttService });
     stream.parameter({ name: 'ai-endpoint', value: aiEndpoint });
     stream.parameter({ name: 'tts-service', value: ttsService });
-    stream.parameter({ name: 'voice-type', value: voiceType });
     stream.parameter({ name: 'lead-prompt', value: leadPrompt });
     stream.parameter({ name: 'introduction', value: introduction });
+    stream.parameter({ name: 'conversation-id', value: conversationId });
 
     twiml.pause({ length: 15 });
 

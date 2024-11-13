@@ -18,7 +18,7 @@ class GroqService {
 
       const responseFormatConfig = responseFormat ? {
         response_format: { 
-          type: responseFormat === 'json' ? 'json_object' : 'text'
+          type: responseFormat?.startsWith("json")? 'json_object' : 'text'
         }
       } : {};
 

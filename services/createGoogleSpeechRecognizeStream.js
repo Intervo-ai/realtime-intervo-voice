@@ -25,6 +25,9 @@ function createGoogleSpeechRecognizeStream({
       phrases: [
         "CodeDesign",
         "CodeDesign.ai",
+        "Intervo.ai",
+        "Intervo",
+        "Manjunath",
         "Hey",
         "hai",
       ],

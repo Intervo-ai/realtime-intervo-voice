@@ -16,7 +16,8 @@ function extractConfig(customParameters) {
     ttsService: customParameters['tts-service'],
     voiceType: customParameters['voice-type'],
     leadPrompt: customParameters['lead-prompt'],
-    introduction: customParameters['introduction']
+    introduction: customParameters['introduction'],
+    conversationId: customParameters['conversation-id']
   };
 }
 
@@ -26,6 +27,8 @@ function handleTwilioConnection(ws, req, wss) {
     let config = {
       conversationId: internalConversationId
     };
+    let customParameters; // Add this to store parameters
+
     /* Twilio connection
      * This is where most of the Realtime stuff happens. Highly performance sensitive.
      */ 
@@ -46,13 +49,13 @@ function handleTwilioConnection(ws, req, wss) {
 
       if (data.event === "start") {
         streamSid = data.streamSid;
+        customParameters = data.start.customParameters; // Store custom parameters
         config = extractConfig(data.start.customParameters);
-        config.conversationId = internalConversationId;
+        
         console.log(`[${timer()}] Stream started with streamSid: ${streamSid}`);
         console.log('Configuration from parameters:', config);
         
-        orchestrator = new OrchestrationManager({...config}, "initiated");
-
+        orchestrator = await new OrchestrationManager(config).initialize();
         // Initialize IntentClassifier and start greeting
         intentClassifier = new IntentClassifierAgent({
           aiService: 'groq',
@@ -63,7 +66,7 @@ function handleTwilioConnection(ws, req, wss) {
 
         // Send initial greeting via TTS
         const ttsFunction = getTTSService(config.ttsService);
-        const greeting = await intentClassifier.process('');
+        const greeting = await orchestrator.process('');
         if (greeting.text) {
           await ttsFunction(greeting.text, ws, streamSid);
         }
@@ -86,44 +89,30 @@ function handleTwilioConnection(ws, req, wss) {
       }
 
       if (data.event === "stop") {
+        console.log(customParameters,configk, "custom parameters")
         console.log(`[${timer()}] Media WS: Stop event received, ending Google stream.`);
         
         // Send conversation summary to clients
-        async function sendConversationSummary() {
+      async function sendConversationSummary() {
           console.log("Sending conversation summary to clients", conversationHistory);
           if (conversationHistory) {
-            // Create a new orchestrator just for summary
-            
-            // Register summary agent
-       const summaryOrchestrator = orchestrator.registerAgent(new SummaryAgent({
-              aiService: 'openai',
-              aiConfig: {
-                temperature: 0.3,
-                maxTokens: 200
-              }
-            }));
+            // Get conversation state
+            const conversationState = await ConversationState.getInstance(config.conversationId);
+            const memoryState = conversationState.getMemoryState();
 
-            // Register response handler for summary
-            orchestrator.onResponse({
-              type: 'general',
-              callback: (response) => {
-                wss.clients.forEach((client) => {
-                  if (client.readyState === WebSocket.OPEN && client !== ws) {
-                    client.send(JSON.stringify({
-                      event: "summary", 
-                      text: response.text
-                    }));
-                  }
-                });
-                console.log(`[${timer()}] Conversation summary sent to clients: "${response.text}"`);
+            // Send both summary and memory state to clients
+            wss.clients.forEach((client) => {
+              if (client.readyState === WebSocket.OPEN && client !== ws) {
+                client.send(JSON.stringify({
+                  event: "summary",
+                  text: response.text,
+                  memory: memoryState,
+                  customParameters: customParameters // Include stored parameters
+                }));
               }
             });
-
-            // Process the conversation history
-            await summaryOrchestrator.process(conversationHistory);
           }
         }
-        
         sendConversationSummary();
         recognizeStream.end();
       }
@@ -163,7 +152,7 @@ function handleTwilioConnection(ws, req, wss) {
 
       // Register other agents
       orchestrator.registerAgent(new QuickResponseAgent({
-        aiService: 'groq',
+        aiService: 'openai',
         aiConfig: {
           temperature: 0.7,
           maxTokens: 100 // Keep responses short

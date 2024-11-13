@@ -102,29 +102,38 @@ class IntentClassifierAgent extends BaseAgent {
       }
     });
     
-    this.conversationPhase = 'start';
+    
+    if (!config.conversationId) {
+      throw new Error('conversationId is required for IntentClassifierAgent');
+    }
+    
     this.customerName = config.customerName || null;
     this.introPlayed = false;
+    
+    // Handle async initialization
+    this.initializationPromise = (async () => {
+      this.state = await require('../services/ConversationState').getInstance(config.conversationId);
+    })();
   }
 
-  async process(input) {
-    console.log("IntentClassifierAgent process:", this.conversationPhase);
+  // Add helper method to ensure initialization
+  async ensureInitialized() {
+    await this.initializationPromise;
+  }
+
+  async process(input, {goal, memoryState}) {
     
-    // Initial greeting should only happen once
-    if (this.conversationPhase === 'start') {
-      this.conversationPhase = 'waitForGreeting';
-      return {
-        text: this.customerName ? `Hey ${this.customerName}` : "Hey there",
-        type: 'structured',
-        priority: 'immediate'
-      };
-    }
+    await this.ensureInitialized();
+    console.log("Black sheep:", this.state.conversationPhase, goal, memoryState);
     
     // Handle other structured phases
-    if (this.conversationPhase !== 'unstructured') {
-      return await this.handleStructuredPhase(input);
+    if (this.state.conversationPhase !== 'unstructured') {
+      return await this.handleStructuredPhase(input,this.state);
     }
 
+    if(goal === "lead-qualification") {
+      return await this.handleLeadQualificationPhase(input, memoryState);
+    }
     // Handle unstructured phase (existing logic)
     const response = await this.classifyIntent(input);
     return {
@@ -140,38 +149,102 @@ class IntentClassifierAgent extends BaseAgent {
     };
   }
 
+  async handleLeadQualificationPhase(input, memoryState) {
+    // Check if there's a previous question being answered
+    const previousQuestion = await this.state.get('context', 'lastQuestion');
+    const expectedField = await this.state.get('context', 'expectedField');
+
+    console.log("Previous question:", previousQuestion, "Expected field:", expectedField);
+
+    if (previousQuestion && expectedField) {
+      // Analyze the response to the previous question
+      const responseAnalysis = await this.callAI(`
+        Analyze if this response answers the question: "${previousQuestion}. Even if the user says, I am not interested in sharing or Straight no - that's a valid answer. "
+        Input: "${input}"
+        Return JSON: {
+          "isValidAnswer": boolean,
+          "confidence": number (0-1),
+          "extractedValue": string
+        }
+      `, { responseFormat: 'json_object' });
+
+      const analysis = JSON.parse(responseAnalysis);
+        
+      console.log(analysis, "*************$$$$$$$$$$$$$$$$$$$$$$$$$$$analysis");
+      if (analysis.isValidAnswer) {
+        // Update both state and memoryState
+        memoryState.entities.fields[expectedField] = analysis.extractedValue;
+        memoryState.entities.collected[expectedField] = true;
+        
+        // Also update the conversation state for persistence
+        await this.state.set('entities.fields', expectedField, analysis.extractedValue);
+        await this.state.set('entities.collected', expectedField, true);
+      }
+    }
+
+    // Use memoryState to find next required field
+    const nextField = Object.keys(memoryState.entities.required)
+      .find(field => !memoryState.entities.collected[field]);
+
+    console.log(nextField, memoryState.entities,"nextField");
+    if (!nextField) {
+      return {
+        type: 'call-end',
+        text: "Thank you for providing all that information! That's all I need for now. Someone from the team will get in touch with you shortly",
+        complete: true,
+        memoryState, // Return updated memoryState
+        order:1
+      };
+    }
+
+    // Generate the next question based on the field from memoryState
+    const questionPrompt = await this.generateQuestion(nextField);
+    
+    // Store context for next interaction
+    await this.state.set('context', 'lastQuestion', questionPrompt);
+    await this.state.set('context', 'expectedField', nextField);
+
+    return {
+      type: 'lead-question',
+      text: questionPrompt,
+      field: nextField,
+      complete: false,
+      memoryState // Return updated memoryState
+    };
+  }
+
+  async generateQuestion(field) {
+    // First check if we have pre-generated questions
+    const preGeneratedQuestions = await this.state.get('context', 'preGeneratedQuestions');
+    console.log(preGeneratedQuestions,field, "preGeneratedQuestions");
+    if (preGeneratedQuestions) {
+      const question = preGeneratedQuestions.find(q => q.field === field);
+      if (question) {
+        return question.text;
+      }
+    }
+const prompt = `
+      Generate a natural, conversational question to ask about a person's "${field}".
+      The question should be friendly and professional.
+      Return only the question text without quotes or additional formatting.
+    `;
+    
+    const response = await this.callAI(prompt, {
+      temperature: 0.7 // Slightly higher temperature for more natural variation
+    });
+    
+    return response.trim();
+  }
+
   async handleStructuredPhase(input) {
-    console.log("Current phase:", this.conversationPhase, "Input:", input);
+    console.log("Current phase:", this.state.conversationPhase, this.state.structuredStep, "Input:", input);
 
-    switch(this.conversationPhase) {
-      case 'waitForGreeting':
-        if (!input.trim()) return null;
-        
-        this.conversationPhase = 'availability';
-        return {
-          type: 'structured',
-          priority: 'immediate',
-          nextAction: 'playIntro'  // Now play the introduction
-        };
-
-      case 'intro':
-        // Analyze if user is asking about identity
-        const identityResponse = await this.analyzeIdentityQuestion(input);
-        this.conversationPhase = 'availability';
-        
-        return {
-          text: identityResponse.needsIdentity ? 
-            "I'm an AI assistant calling on behalf of [Company]. Is this a good time to talk?" :
-            "Is this a good time to talk?",
-          type: 'structured',
-          priority: 'immediate'
-        };
-
+    switch(this.state.structuredStep) {
+  
       case 'availability':
         const timingResponse = await this.analyzeTimingResponse(input);
         
         if (timingResponse.isGoodTime) {
-          this.conversationPhase = 'unstructured';
           return {
             text: "Great! I'd like to ask you a few questions about your business.",
             type: 'affirmative',
@@ -205,7 +278,7 @@ class IntentClassifierAgent extends BaseAgent {
     `;
     
     const response = await this.callAI(prompt, {
-      responseFormat: 'json'
+      responseFormat: 'json_object'
     });
     return JSON.parse(response);
   }
@@ -222,7 +295,7 @@ class IntentClassifierAgent extends BaseAgent {
     `;
     
     const response = await this.callAI(prompt, {
-      responseFormat: 'json'
+      responseFormat: 'json_object'
     });
     return JSON.parse(response);
   }
@@ -237,7 +310,7 @@ class IntentClassifierAgent extends BaseAgent {
     }`;
     
     const response = await this.callAI(prompt, {
-      responseFormat: 'json'
+      responseFormat: 'json_object'
     });
 
     return JSON.parse(response);

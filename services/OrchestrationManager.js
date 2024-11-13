@@ -4,10 +4,60 @@ constructor(config) {
     this.responseCallbacks = new Map();
     this.ttsQueue = [];
     this.isProcessingTTS = false;
-    this.conversationPhase = 'structured';
-    this.structuredStep = 'greeting';
+    
     this.config = config;
+
+    this.agentProcessingRules = {
+      'domain': {
+        sequence: [
+          {
+            agents: ['intent-classifier'],
+            acknowledgment: true,
+            order: 1
+          },
+          {
+            agents: ['rag'],
+            order: 2
+          }
+        ]
+      },
+      'lead-question': {
+        sequence: [
+          {
+            agents: ['intent-classifier'],
+            order: 1
+          }
+        ]
+      },
+      'call-end': {
+        sequence: [
+          {
+            agents: ['intent-classifier'],
+            order: 1
+          }
+        ]
+      },
+      'default': {
+        sequence: [
+          {
+            agents: ['quick-response', 'sentiment-analyzer'],
+            excludeAgents: ['rag', 'intent-classifier'],
+            order: 1
+          }
+        ]
+      }
+    };
   }
+
+  // Add a new async initialization method
+async initialize() {
+    if (this.config?.conversationId) {
+        this.conversationId = this.config.conversationId;
+        this.state = await require('./ConversationState').getInstance(this.conversationId);
+    }
+    return this;
+}
+
 
   registerAgent(agent) {
     this.agents.set(agent.name, agent);
@@ -24,19 +74,33 @@ constructor(config) {
   }
 
   async process(input) {
-    if (this.conversationPhase === 'structured') {
+
+    console.log("OrchestrationManager process:", this.state.conversationPhase);
+    // Initial greeting should only happen once
+    if (this.state.conversationPhase === 'start') {
+      this.state.conversationPhase = 'structured';
+      return {
+        text: this.customerName ? `Hey ${this.customerName}` : "Hey there",
+        type: 'structured',
+        priority: 'immediate'
+      };
+    }
+    if (this.state.conversationPhase === 'structured') {
       return await this.handleStructuredPhase(input);
     }
+    
     return await this.handleUnstructuredPhase(input);
   }
 
   async handleStructuredPhase(input) {
     const intentClassifier = this.agents.get('intent-classifier');
-    const response = await intentClassifier.process(input);
+    
+    const response = await intentClassifier.process(input, this.state);
+
     const preCallAudioManager = require('./PreCallAudioManager');
     
-
-    if (this.structuredStep === 'greeting') {
+    
+    if (this.state.structuredStep === 'greeting') {
       if (this.config.introduction) {
         const cacheKey = preCallAudioManager._generateCacheKey(
           this.config.introduction,
@@ -45,21 +109,22 @@ constructor(config) {
         );
 
         const cachedAudioParts = preCallAudioManager.getAudio(cacheKey);
+        console.log(cachedAudioParts, "cachedAudioParts")
         
         await this.queueTTSResponse({
-          text: cachedAudioParts.text || "Hello! Is this a good time to talk?",
+          text:this.config.introduction || "Hello! Is this a good time to talk?",
           priority: 'immediate',
           agent: 'intent-classifier',
           order: 1,
           audio: cachedAudioParts
         });
 
-        this.structuredStep = 'availability';
+        this.state.structuredStep = 'availability';
         return [response];
       }
     }
     
-    if (this.structuredStep === 'availability') {
+    if (this.state.structuredStep === 'availability') {
       if (response.type === 'affirmative') {
         
         await this.queueTTSResponse({
@@ -68,19 +133,39 @@ constructor(config) {
           agent: 'intent-classifier',
           order: 1,
         });
-        this.conversationPhase = 'unstructured';
+        this.state.conversationPhase = 'unstructured';
       }
       return [response];
     }
   }
 
   async handleUnstructuredPhase(input) {
+
+    console.log("Unstructured phase*************************");
+    console.log(this.config, "unstructured phase config");
+
+    /* unstructured phases is a free flowing AI conversation. We provide
+     * all kinds of helpers (memory, multiple agents, context etc)
+     * to the AI to help it understand the user's intent and respond
+     * accordingly.
+     * 
+     * But still - we have to classify unstructured based on the goal of the call.
+    */
+
+    const goal = this.config["leadPrompt"]? "lead-qualification" : "general";
+    let memoryState = null;
+    if(goal !=="general") {
+     memoryState = this.state.getMemoryState();
+    console.log("Memory State:", memoryState);
+    }
+    
+    
     // Start all agent processes concurrently
     const agentPromises = new Map();
-
+    
     // Start IntentClassifier
     const intentClassifier = this.agents.get('intent-classifier');
-    agentPromises.set('intent-classifier', intentClassifier.process(input));
+    agentPromises.set('intent-classifier', intentClassifier.process(input, {goal, memoryState}));
 
     // Start all other agents immediately
     Array.from(this.agents.values())
@@ -108,43 +193,57 @@ constructor(config) {
     }
 
     // Wait for all other responses and process them based on intent
-    const responses = await Promise.all(
-      Array.from(agentPromises.entries())
-        .filter(([name]) => {
-          // Skip intent-classifier always
-          if (name === 'intent-classifier') return false;
-          // For domain questions, ONLY allow RAG
-          if (intentResult.type === 'domain') {
-            return name === 'rag';
-          }
-          // For non-domain questions, skip RAG
-          if (name === 'rag') return false;
-          return true;
-        })
-        .map(async ([name, promise]) => {
-          try {
-            const response = await promise;
-            const agent = this.agents.get(name);
-            
-            // Add debug logs
-            // Check if this agent should process based on intent
-            const shouldProcess = await agent.shouldProcess(input, context);
+    const processSequence = async (sequence, agentPromises) => {
+      const results = [];
+      
+      for (const step of sequence) {
+        const stepResponses = await Promise.all(
+          Array.from(agentPromises.entries())
+            .filter(([name]) => {
+              if (step.agents?.length > 0) {
+                return step.agents.includes(name);
+              }
+              return !step.excludeAgents?.includes(name);
+            })
+            .map(async ([name, promise]) => {
+              try {
+                const response = await promise;
+                const agent = this.agents.get(name);
+                const shouldProcess = await agent.shouldProcess(input, context);
 
-            
-            if (shouldProcess) {
-              return {
-                ...response,
-                agent: name,
-                order: this.getAgentOrder(name, intentResult.type)
-              };
-            }
-            return null;
-          } catch (error) {
-            console.error(`Error processing agent ${name}:`, error);
-            return null;
-          }
-        })
-    );
+                if (shouldProcess) {
+                  // Handle acknowledgment if needed
+                  if (step.acknowledgment && response.acknowledgment) {
+                    await this.queueTTSResponse({
+                      text: response.acknowledgment,
+                      priority: 'immediate',
+                      agent: name,
+                      order: step.order
+                    });
+                  }
+
+                  return {
+                    ...response,
+                    agent: name,
+                    order: step.order
+                  };
+                }
+                return null;
+              } catch (error) {
+                console.error(`Error processing agent ${name}:`, error);
+                return null;
+              }
+            })
+        );
+
+        results.push(...stepResponses.filter(r => r !== null));
+      }
+      
+      return results;
+    };
+
+    const rules = this.agentProcessingRules[intentResult.type] || this.agentProcessingRules.default;
+    const responses = await processSequence(rules.sequence, agentPromises);
 
     // Queue valid responses for TTS
     const validResponses = responses.filter(r => r !== null);
@@ -155,18 +254,6 @@ constructor(config) {
     return validResponses;
   }
 
-  getAgentOrder(agentName, intentType) {
-
-    // Add debug log
-    console.log(`Getting order for ${agentName} with intent ${intentType}`);
-    
-    // Define the order of agent responses
-    const orderMap = {
-      'quick-response': intentType === 'casual' ? 2 : 4,
-      'rag': intentType === 'domain' ? 2 : 3
-    };
-    return orderMap[agentName] || 99;
-  }
 
   async queueTTSResponse(response) {
  
@@ -252,6 +339,11 @@ constructor(config) {
         }
       });
     }
+  }
+
+  // When the conversation ends
+  cleanup() {
+    require('./ConversationState').cleanup(this.conversationId);
   }
 }
 
