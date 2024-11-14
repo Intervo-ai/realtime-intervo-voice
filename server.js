@@ -87,6 +87,7 @@ const streamRouter = require("./routes/streamRouter");
 const voiceRouter = require("./routes/voiceRouter");
 const authRouter = require("./routes/authRouter");
 const userRouter = require("./routes/userRouter");
+const agentRouter = require("./routes/agentRouter");
 
 
 
@@ -112,6 +113,7 @@ app.use("/voice", voiceRouter);
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/auth", authRouter);
 app.use("/user", userRouter);
+app.use("/agent", agentRouter);
 // Create shared HTTP server for both Express and WebSocket
 const server = http.createServer(app);
 
