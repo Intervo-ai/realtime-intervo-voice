@@ -15,6 +15,15 @@ const agentSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  apiKey: { type: String, unique: true }, 
+  published: { type: Boolean, default: false },
+  uniqueIdentifier: { type: String, unique: true },
+  webhook: {
+    name: { type: String },
+    endpoint: { type: String },
+    method: { type: String, enum: ['GET', 'POST', 'PUT', 'DELETE'] },
+    event: { type: String }
+  },
   subAgents: {
     intentAgent: {
       type: String,

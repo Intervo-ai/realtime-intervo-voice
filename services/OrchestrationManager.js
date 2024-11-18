@@ -74,6 +74,10 @@ async initialize() {
   }
 
   async process(input) {
+  //   if (this.isProcessingTTS) {
+  //     console.log('User interruption detected, pausing TTS.');
+  //     this.isProcessingTTS = false; // Pause TTS processing
+  // }
 
     console.log("OrchestrationManager process:", this.state.conversationPhase);
     // Initial greeting should only happen once

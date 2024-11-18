@@ -3,6 +3,7 @@ const router = express.Router();
 const Agent = require("../models/Agent");
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.NEXTAUTH_SECRET;
+const { v4: uuidv4 } = require('uuid');
 
 // Authentication middleware
 const authenticateUser = async (req, res, next) => {
@@ -54,6 +55,30 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Route to get URL and API key of an agent
+router.get("/:id/connect-info", async (req, res) => {
+  try {
+    const userId = req.user.id; 
+    const agentId = req.params.id;
+
+    // Find the agent and ensure the user owns it
+    const agent = await Agent.findOne({ _id: agentId, user: userId });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found or unauthorized" });
+    }
+
+    // Generate URL dynamically
+    const url = `https://yourdomain.com/api/agent/${agent._id}`;
+    const apiKey = agent.apiKey;
+
+    res.json({ url, apiKey });
+  } catch (error) {
+    console.error("Error retrieving connect info:", error);
+    res.status(500).json({ error: "Failed to retrieve connect info" });
+  }
+});
+
 // Create new agent
 router.post("/", async (req, res) => {
   try {
@@ -85,6 +110,40 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Route to save webhook configuration
+router.post("/:id/webhook", async (req, res) => {
+  try {
+    const userId = req.user.id; // Assuming user is authenticated
+    const agentId = req.params.id;
+    const { webhookName, webhookEndpoint, webhookMethod, webhookEvent } = req.body;
+
+    // Validate required fields
+    if (!webhookName || !webhookEndpoint || !webhookMethod || !webhookEvent) {
+      return res.status(400).json({ error: "All webhook fields are required" });
+    }
+
+    // Find the agent and ensure the user owns it
+    const agent = await Agent.findOne({ _id: agentId, user: userId });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found or unauthorized" });
+    }
+
+    agent.webhook = {
+      name: webhookName,
+      endpoint: webhookEndpoint,
+      method: webhookMethod,
+      event: webhookEvent
+    };
+    await agent.save();
+
+    res.json({ success: true, message: "Webhook configuration saved successfully", agent });
+  } catch (error) {
+    console.error("Error saving webhook configuration:", error);
+    res.status(500).json({ error: "Failed to save webhook configuration" });
+  }
+});
+
 // Update agent (with user verification)
 router.put("/:id", async (req, res) => {
   try {
@@ -104,6 +163,47 @@ router.put("/:id", async (req, res) => {
   } catch (error) {
     console.error("Error updating agent:", error);
     res.status(500).json({ error: "Failed to update agent" });
+  }
+});
+
+// Route to publish an agent
+router.put("/:id/publish", async (req, res) => {
+  try {
+    const userId = req.user.id; // Assuming user is authenticated
+    const agentId = req.params.id;
+
+    // Find the agent and ensure the user owns it
+    const agent = await Agent.findOne({ _id: agentId, user: userId });
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found or unauthorized" });
+    }
+
+    if (!agent.uniqueIdentifier) {
+      agent.uniqueIdentifier = uuidv4(); // Generate a unique identifier using uuid
+    }
+
+    // Generate API key if not already assigned
+    if (!agent.apiKey) {
+      agent.apiKey = uuidv4(); 
+    }
+
+    agent.published = true;
+    await agent.save();
+
+    // Generate URL dynamically
+    const url = `https://call-plugin-api.codedesign.app/${agent.uniqueIdentifier}`;
+
+    res.json({ 
+      success: true, 
+      message: "Agent published successfully", 
+      agent,
+      url,
+      apiKey: agent.apiKey
+    });
+  } catch (error) {
+    console.error("Error publishing agent:", error);
+    res.status(500).json({ error: "Failed to publish agent" });
   }
 });
 

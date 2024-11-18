@@ -90,6 +90,7 @@ const userRouter = require("./routes/userRouter");
 const agentRouter = require("./routes/agentRouter");
 const contactRouter = require("./routes/contactRouter");
 const activityRouter = require("./routes/activityRouter");
+const incomingCallRouter = require('./routes/incomingCallRouter');
 
 
 // Token generation for Twilio Client
@@ -117,6 +118,7 @@ app.use("/user", userRouter);
 app.use("/agent", agentRouter);
 app.use("/contacts", contactRouter);
 app.use("/activities", activityRouter);
+app.use("/incoming", incomingCallRouter);
 
 // Create shared HTTP server for both Express and WebSocket
 const server = http.createServer(app);

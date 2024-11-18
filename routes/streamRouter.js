@@ -70,7 +70,6 @@ router.post("/", async (req, res) => {
     stream.parameter({ name: 'tts-service', value: ttsService });
     stream.parameter({ name: 'lead-prompt', value: leadPrompt });
     stream.parameter({ name: 'introduction', value: introduction });
-    stream.parameter({ name: 'conversation-id', value: conversationId });
 
     twiml.pause({ length: 15 });
 
