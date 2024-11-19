@@ -51,7 +51,7 @@ router.post("/", async (req, res) => {
   }
   console.log(aiConfig, "aiConfig");
   
-  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId } = aiConfig;
+  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId, agentId } = aiConfig;
   
   console.log(conversationId, "conversationId");
   const serverDomain = "call-plugin-api.codedesign.app";
@@ -70,6 +70,7 @@ router.post("/", async (req, res) => {
     stream.parameter({ name: 'tts-service', value: ttsService });
     stream.parameter({ name: 'lead-prompt', value: leadPrompt });
     stream.parameter({ name: 'introduction', value: introduction });
+    stream.parameter({ name: 'agent-id', value: agentId });
 
     twiml.pause({ length: 15 });
 

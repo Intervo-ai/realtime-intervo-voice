@@ -9,8 +9,7 @@ const createSpeechRecognizeStream = require('../services/speechRecognizeStream')
 const { getTTSService } = require('../services/ttsRouter');
 const PreCallAudioManager = require('../services/PreCallAudioManager');
 const { v4: uuidv4 } = require('uuid');
-const axios = require('axios');
-const Agent = require('../models/Agent');
+const handleCallStopEvent=require('../lib/callStopHandler')
 
 function extractConfig(customParameters) {
   return {
@@ -20,6 +19,7 @@ function extractConfig(customParameters) {
     voiceType: customParameters['voice-type'],
     leadPrompt: customParameters['lead-prompt'],
     introduction: customParameters['introduction'],
+    agentId: customParameters['agent-id'],
   };
 }
 
@@ -92,81 +92,7 @@ function handleTwilioConnection(ws, req, wss) {
       }
 
       if (data.event === "stop") {
-        console.log(customParameters,config, "custom parameters")
-        console.log(`[${timer()}] Media WS: Stop event received, ending Google stream.`);
-        console.log("Call ended, preparing to send data to webhook.");
-
-        const callDetails = {
-          conversationId: config.conversationId,
-          conversationHistory: activity.conversationTranscription,
-          memoryState: activity.memory,
-          startTime: callStartTime.toISOString(),
-          endTime: new Date().toISOString(),
-          duration: `${((Date.now() - callStartTime) / 1000).toFixed(2)} seconds`,
-          callType: activity.callType,
-          status: activity.status,
-          contact: {
-            name: `${contact.firstName} ${contact.lastName}`,
-            email: contact.email,
-            phoneNumber: contact.phoneNumber,
-            country: contact.country
-          },
-          customParameters: customParameters
-        }
-       const agentId = customParameters['agent-id']; 
-       const agent = await Agent.findById(agentId);
-       if (agent) {
-        await sendToWebhook(agent, callDetails);
-       } else {
-        console.error("Agent not found.");
-       }
-
-      
-      // Function to send data to the webhook
-      async function sendToWebhook(agent, data) {
-        if (!agent.webhook || !agent.webhook.endpoint) {
-          console.error("Webhook not configured for this agent.");
-          return;
-        }
-
-       try {
-        const response = await axios({
-         method: agent.webhook.method,
-         url: agent.webhook.endpoint,
-         data: {
-           event: agent.webhook.event,
-           payload: data
-         }
-        });
-
-        console.log("Data sent to webhook successfully:", response.data);
-       } catch (error) {
-          console.error("Error sending data to webhook:", error);
-       }
-    }
-
-        // Send conversation summary to clients
-      async function sendConversationSummary() {
-          console.log("Sending conversation summary to clients", conversationHistory);
-          if (conversationHistory) {
-            // Get conversation state
-            const conversationState = await ConversationState.getInstance(config.conversationId);
-            const memoryState = conversationState.getMemoryState();
-
-            // Send both summary and memory state to clients
-            wss.clients.forEach((client) => {
-              if (client.readyState === WebSocket.OPEN && client !== ws) {
-                client.send(JSON.stringify({
-                  event: "summary",
-                  text: response.text,
-                  memory: memoryState,
-                  customParameters: customParameters // Include stored parameters
-                }));
-              }
-            });
-          }
-        }
-        sendConversationSummary();
+        await handleCallStopEvent(config, customParameters, callStartTime, conversationHistory, wss, ws, timer);
         recognizeStream.end();
       }
     });

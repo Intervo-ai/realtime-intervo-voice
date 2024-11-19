@@ -1,27 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const Agent = require("../models/Agent");
-const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.NEXTAUTH_SECRET;
 const { v4: uuidv4 } = require('uuid');
-
-// Authentication middleware
-const authenticateUser = async (req, res, next) => {
-  try {
-    const token = req.cookies.authToken;
-    
-    if (!token) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = { id: decoded.userId, email: decoded.email };
-    next();
-  } catch (error) {
-    console.error("Authentication error:", error);
-    res.status(401).json({ error: "Invalid authentication token" });
-  }
-};
+const authenticateUser=require('../lib/authMiddleware')
 
 // Apply authentication middleware to all routes
 router.use(authenticateUser);
@@ -68,8 +49,16 @@ router.get("/:id/connect-info", async (req, res) => {
       return res.status(404).json({ error: "Agent not found or unauthorized" });
     }
 
+    // Check if agent is published (has uniqueIdentifier and apiKey)
+    if (!agent.uniqueIdentifier || !agent.apiKey) {
+      return res.status(400).json({ 
+        error: "Agent is not published", 
+        message: "Please publish the agent first to get connection information" 
+      });
+    }
+
     // Generate URL dynamically
-    const url = `https://yourdomain.com/api/agent/${agent._id}`;
+    const url = `https://call-plugin-api.codedesign.app/workflow/${agent.uniqueIdentifier}`;
     const apiKey = agent.apiKey;
 
     res.json({ url, apiKey });
@@ -111,7 +100,7 @@ router.post("/", async (req, res) => {
 });
 
 // Route to save webhook configuration
-router.post("/:id/webhook", async (req, res) => {
+router.put("/:id/webhook", async (req, res) => {
   try {
     const userId = req.user.id; // Assuming user is authenticated
     const agentId = req.params.id;
@@ -192,7 +181,7 @@ router.put("/:id/publish", async (req, res) => {
     await agent.save();
 
     // Generate URL dynamically
-    const url = `https://call-plugin-api.codedesign.app/${agent.uniqueIdentifier}`;
+    const url = `https://call-plugin-api.codedesign.app/workflow/${agent.uniqueIdentifier}`;
 
     res.json({ 
       success: true, 
