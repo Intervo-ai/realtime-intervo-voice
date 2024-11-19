@@ -51,7 +51,7 @@ router.post("/", async (req, res) => {
   }
   console.log(aiConfig, "aiConfig");
   
-  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId, agentId } = aiConfig;
+  const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId, agentId,activityId } = aiConfig;
   
   console.log(conversationId, "conversationId");
   const serverDomain = "call-plugin-api.codedesign.app";
@@ -71,6 +71,8 @@ router.post("/", async (req, res) => {
     stream.parameter({ name: 'lead-prompt', value: leadPrompt });
     stream.parameter({ name: 'introduction', value: introduction });
     stream.parameter({ name: 'agent-id', value: agentId });
+    stream.parameter({ name: 'conversation-id', value: conversationId });
+    stream.parameter({name:'activity-id',value:activityId})
 
     twiml.pause({ length: 15 });
 
@@ -94,6 +96,9 @@ router.post("/", async (req, res) => {
               <Parameter name="voice-type" value="${encodeURIComponent(voiceType)}"/>
               <Parameter name="lead-prompt" value="${encodeURIComponent(leadPrompt)}"/>
               <Parameter name="introduction" value="${encodeURIComponent(introduction)}"/>
+              <Parameter name="agent-id" value="${encodeURIComponent(agentId)}"/>
+              <Parameter name="conversation-id" value="${encodeURIComponent(conversationId)}"/>
+              <Parameter name="activity-id" value="${encodeURIComponent(activityId)}"/>
             </Stream>
           </Connect>
           <Pause length="10"/>

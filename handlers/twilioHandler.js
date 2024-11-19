@@ -8,8 +8,7 @@ const { SummaryAgent } = require('../agents/SummaryAgent');
 const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
 const { getTTSService } = require('../services/ttsRouter');
 const PreCallAudioManager = require('../services/PreCallAudioManager');
-const { v4: uuidv4 } = require('uuid');
-const handleCallStopEvent=require('../lib/callStopHandler')
+const handleCallStopEvent=require('../lib/callStopHandler');
 
 function extractConfig(customParameters) {
   return {
@@ -20,15 +19,14 @@ function extractConfig(customParameters) {
     leadPrompt: customParameters['lead-prompt'],
     introduction: customParameters['introduction'],
     agentId: customParameters['agent-id'],
+    conversationId: customParameters['conversation-id'],
+    activityId:customParameters['activity-id']
   };
 }
 
 let orchestrator;
 function handleTwilioConnection(ws, req, wss) {
-    const internalConversationId = uuidv4();
-    let config = {
-      conversationId: internalConversationId
-    };
+    let config={};
     let customParameters; // Add this to store parameters
 
     /* Twilio connection
@@ -92,7 +90,7 @@ function handleTwilioConnection(ws, req, wss) {
       }
 
       if (data.event === "stop") {
-        await handleCallStopEvent(config, customParameters, callStartTime, conversationHistory, wss, ws, timer);
+        await handleCallStopEvent(config, callStartTime, conversationHistory, wss, ws, timer);
         recognizeStream.end();
       }
     });
