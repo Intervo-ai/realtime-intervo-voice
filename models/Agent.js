@@ -61,7 +61,7 @@ const agentSchema = new mongoose.Schema({
   },
   agentType: {
     type: String,
-    enum: ['Lead Qualification', 'Customer Support', 'Sales', 'General Assistant'],
+    enum: ['Lead Qualification', 'Customer Services','Interactive Product Assistance' ,'Receptionist'],
     required: true,
     default: 'Lead Qualification'
   },
