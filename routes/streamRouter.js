@@ -47,7 +47,7 @@ router.post("/", async (req, res) => {
 */
   let aiConfig = {};
   if (req.body?.aiConfig) {
-    aiConfig = JSON.parse(req.body?.aiConfig);
+    aiConfig = req.body.aiConfig;
   }
   console.log(aiConfig, "aiConfig");
   

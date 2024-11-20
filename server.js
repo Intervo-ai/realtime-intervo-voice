@@ -21,7 +21,7 @@ const corsOptions = {
   origin: 'http://localhost:3000', // Your frontend URL
   credentials: true, // Important for cookies
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
   exposedHeaders: ["Set-Cookie"] 
 }
 

@@ -97,9 +97,9 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
     await newActivity.save();
 
     const config = {
-      sttService: "google", 
+      sttService: req.agent.sttSettings.service,
       aiEndpoint: "gpt4", 
-      ttsService: "google", 
+      ttsService: req.agent.ttsSettings.service,
       voiceType: "adam", 
       leadPrompt: "I want to collect information about the business nature of our users.",
       introduction: `Hello ${firstName} ${lastName}, this is an automated call from ${req.agent.name}.`,
