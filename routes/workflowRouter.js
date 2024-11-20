@@ -76,6 +76,11 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
 
     await newActivity.save();
 
+    // Trigger the call
+    // Make api call to Twilio and send the parameters
+    
+
+
     res.status(201).json({
       success: true,
       message: "Activity and contact updated successfully",
