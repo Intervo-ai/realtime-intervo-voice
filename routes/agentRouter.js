@@ -133,6 +133,28 @@ router.put("/:id/webhook", async (req, res) => {
   }
 });
 
+// Route to get webhook (should be more secure?)
+router.get("/:id/webhook", async (req, res) => {
+  try {
+    const userId = req.user.id; // Assuming user is authenticated
+    const agentId = req.params.id;
+ 
+  const agent = await Agent.findOne({
+      _id: req.params.id,
+      user: req.user.id
+    });
+    
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    res.json({ success: true, ...agent.webhook });
+  } catch (error) {
+    console.error("Error saving webhook configuration:", error);
+    res.status(500).json({ error: "Failed to save webhook configuration" });
+  }
+});
+
 // Update agent (with user verification)
 router.put("/:id", async (req, res) => {
   try {
@@ -183,6 +205,12 @@ router.put("/:id/publish", async (req, res) => {
     // Generate URL dynamically
     const url = `https://call-plugin-api.codedesign.app/workflow/${agent.uniqueIdentifier}`;
 
+    
+    if(!agent.published){
+
+    //call connect info endpoint
+    const connectInfo = await axios.get(`${url}/connect-info`, { withCredentials: true });
+    }
     res.json({ 
       success: true, 
       message: "Agent published successfully", 

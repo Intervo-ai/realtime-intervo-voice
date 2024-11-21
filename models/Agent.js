@@ -43,7 +43,7 @@ const agentSchema = new mongoose.Schema({
   sttSettings: {
     service: {
       type: String,
-      enum: ['Google Speech-to-Text', 'Azure Speech Services'],
+      enum: ['Google Speech-to-Text', 'Azure Speech Services', "Assembly AI"],
       default: 'Google Speech-to-Text'
     },
     rawTranscriptionMode: {
@@ -104,6 +104,9 @@ const agentSchema = new mongoose.Schema({
     }]
   },
   systemPrompt: {
+    type: String,
+  },
+  prompt: {
     type: String,
   },
   createdAt: {
