@@ -21,7 +21,7 @@ const corsOptions = {
   origin: 'http://localhost:3000', // Your frontend URL
   credentials: true, // Important for cookies
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
   exposedHeaders: ["Set-Cookie"] 
 }
 
@@ -91,7 +91,7 @@ const agentRouter = require("./routes/agentRouter");
 const contactRouter = require("./routes/contactRouter");
 const activityRouter = require("./routes/activityRouter");
 const workflowRouter = require("./routes/workflowRouter");
-
+const phoneNumberRouter = require("./routes/phoneNumberRouter");
 
 // Token generation for Twilio Client
 app.get("/token", (req, res) => {
@@ -119,6 +119,7 @@ app.use("/agent", agentRouter);
 app.use("/contacts", contactRouter);
 app.use("/activities", activityRouter);
 app.use("/workflow", workflowRouter);
+app.use("/phone-number", phoneNumberRouter);
 
 // Create shared HTTP server for both Express and WebSocket
 const server = http.createServer(app);

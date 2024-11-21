@@ -4,6 +4,7 @@ const activitySchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   agent: { type: mongoose.Schema.Types.ObjectId, ref: "Agent", required: true },
   contact: { type: mongoose.Schema.Types.ObjectId, ref: "Contact", required: true },
+  conversationId: { type: String, required: true },
   conversationTranscription: [
     {
       speaker: { type: String, enum: ["agent", "contact"], required: true },
@@ -12,7 +13,7 @@ const activitySchema = new mongoose.Schema({
     }
   ],
   summary: { type: String },
-  memory: { type: Map, of: mongoose.Schema.Types.Mixed }, // Stores key-value data important for the conversation
+  // memory: { type: Map, of: mongoose.Schema.Types.Mixed }, // Stores key-value data important for the conversation
   collectedInfo: { type: Map, of: mongoose.Schema.Types.Mixed }, // Stores specific information collected during the call
   callDuration: { type: Number, default: 0 }, // Call duration in seconds
   callType: { type: String, enum: ["incoming", "outgoing"], required: true }, 

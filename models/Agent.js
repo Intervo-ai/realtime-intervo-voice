@@ -21,7 +21,7 @@ const agentSchema = new mongoose.Schema({
   webhook: {
     name: { type: String },
     endpoint: { type: String },
-    method: { type: String, enum: ['GET', 'POST', 'PUT', 'DELETE'] },
+    method: { type: String, enum: ['GET', 'POST', 'PUT','PATCH', 'DELETE'] },
     event: { type: String }
   },
   subAgents: {

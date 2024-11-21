@@ -1,8 +1,11 @@
 const express = require("express");
 const router = express.Router();
+const axios = require("axios");
+const { v4: uuidv4 } = require('uuid');
 const Agent = require("../models/Agent");
 const Contact = require("../models/Contact");
 const Activity = require("../models/Activity");
+const ConversationState=require("../models/ConversationState");
 
 // Middleware to authenticate using apiKey from headers and uniqueIdentifier from the URL
 const authenticateApiKeyAndIdentifier = async (req, res, next) => {
@@ -37,7 +40,6 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
     const {
         phoneNumber,
         callType,
-        conversationData,
         firstName = "John",
         lastName = "Caller",
         email,
@@ -51,17 +53,34 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
     // Find or create a contact using the phone number
     let contact = await Contact.findOne({ phoneNumber });
     if (!contact) {
-        contact = new Contact({
-          phoneNumber,
-          firstName,
-          lastName,
-          email,
-          country,
-          agent: req.agent._id,
-          user: req.agent.user,
-        });
-        await contact.save();
+      contact = new Contact({
+        phoneNumber,
+        firstName,
+        lastName,
+        email,
+        country,
+        agent: req.agent._id,
+        user: req.agent.user,
+      });
+      await contact.save();
+    }
+
+    // Create a new conversation state with a unique conversationId
+    const conversationId = uuidv4();
+    const newConversationState = new ConversationState({
+      conversationId,
+      memory: {
+        entities: {
+          fields: new Map(),
+          required: new Map(),
+          collected: new Map()
+        },
+        context: new Map(),
+        preferences: new Map()
       }
+    });
+
+    await newConversationState.save();
 
     // Create a new activity record
     const newActivity = new Activity({
@@ -69,23 +88,43 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
       agent: req.agent._id,
       contact: contact._id,
       callType,
-      conversationTranscription: conversationData ? JSON.parse(conversationData) : [],
+      conversationId,
+      conversationTranscription: [],
       status: 'in-progress',
       createdAt: new Date(),
     });
 
     await newActivity.save();
 
-    // Trigger the call
-    // Make api call to Twilio and send the parameters
-    
+    const config = {
+      sttService: req.agent.sttSettings.service,
+      aiEndpoint: "gpt4", 
+      ttsService: req.agent.ttsSettings.service,
+      voiceType: "adam", 
+      leadPrompt: "I want to collect information about the business nature of our users.",
+      introduction: `Hello ${firstName} ${lastName}, this is an automated call from ${req.agent.name}.`,
+      conversationId,
+      activityId: newActivity._id.toString(),
+      agentId: req.agent._id.toString()
+    };
 
+    // Trigger a call to the /stream endpoint
+    const streamApiUrl = "https://call-plugin-api.codedesign.app/stream";
+    try {
+      const response = await axios.post(streamApiUrl, {
+        aiConfig: config
+      });
+      console.log("Call triggered successfully:", response.data);
+    } catch (error) {
+      console.error("Error triggering the call to /stream:", error);
+    }
 
     res.status(201).json({
       success: true,
       message: "Activity and contact updated successfully",
       contact,
       activity: newActivity,
+      conversationState: newConversationState,
     });
   } catch (error) {
     console.error("Error processing workflow request:", error);
