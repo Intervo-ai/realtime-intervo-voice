@@ -54,8 +54,8 @@ app.use(cookieParser()); // Add this line
 // Use the middleware
 app.use(apiLogger);
 // Middleware
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.json({limit: '50mb'}));
+app.use(express.urlencoded({limit: '50mb', extended: true}));
 // Twilio credentials
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const apiKey = process.env.TWILIO_API_KEY;
@@ -92,6 +92,8 @@ const contactRouter = require("./routes/contactRouter");
 const activityRouter = require("./routes/activityRouter");
 const workflowRouter = require("./routes/workflowRouter");
 const phoneNumberRouter = require("./routes/phoneNumberRouter");
+const interactiveRouter = require("./routes/interactiveRouter");
+const knowledgeRouter = require("./routes/knowledgeRouter");
 
 // Token generation for Twilio Client
 app.get("/token", (req, res) => {
@@ -120,6 +122,10 @@ app.use("/contacts", contactRouter);
 app.use("/activities", activityRouter);
 app.use("/workflow", workflowRouter);
 app.use("/phone-number", phoneNumberRouter);
+app.use("/knowledge-source", knowledgeRouter);
+
+//For the interactive agents
+app.use("/interactive", interactiveRouter);
 
 // Create shared HTTP server for both Express and WebSocket
 const server = http.createServer(app);
