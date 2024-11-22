@@ -2,8 +2,8 @@ const axios = require("axios");
 
 async function fetchAzureVoices() {
   try {
-    const azureRegion = process.env.AZURE_REGION; 
-    const azureApiKey = process.env.AZURE_API_KEY;
+    const azureRegion = process.env.AZURE_SPEECH_REGION; 
+    const azureApiKey = process.env.AZURE_SPEECH_KEY;
 
     // API URL for fetching supported voices
     const url = `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/voices/list`;
@@ -14,6 +14,7 @@ async function fetchAzureVoices() {
         "Ocp-Apim-Subscription-Key": azureApiKey,
       },
     });
+    console.log(response.data);
 
     // Map the response to a consistent format
     return response.data.map((voice) => ({
