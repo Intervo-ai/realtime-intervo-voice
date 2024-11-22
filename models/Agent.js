@@ -59,6 +59,10 @@ const agentSchema = new mongoose.Schema({
     },
     voice: String
   },
+  voice: { 
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Voice'
+  },
   agentType: {
     type: String,
     enum: ['Lead Qualification', 'Customer Services','Interactive Product Assistance' ,'Receptionist'],

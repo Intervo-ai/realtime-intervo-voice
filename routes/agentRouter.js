@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Agent = require("../models/Agent");
+const Voice = require("../models/Voice");
 const { v4: uuidv4 } = require('uuid');
 const authenticateUser=require('../lib/authMiddleware')
 
@@ -98,6 +99,46 @@ router.post("/", async (req, res) => {
     });
   }
 });
+
+// Route to select and assign a voice to an agent
+router.post("/:id/assign-voice", async (req, res) => {
+  try {
+    const agentId = req.params.id;
+    const { voiceId} = req.body;
+
+    if (!agentId || !voiceId) {
+      return res.status(400).json({ error: "Agent ID and Voice ID are required" });
+    }
+
+    // Fetch the agent and voice from the database
+    const agent = await Agent.findById(agentId);
+    const voice = await Voice.findById(voiceId);
+
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    if (!voice) {
+      return res.status(404).json({ error: "Voice not found" });
+    }
+
+    // Update the agent to reference the selected voice
+    agent.voice = voiceId;
+    await agent.save();
+
+    res.json({
+      success: true,
+      message: `Voice "${voice.voiceName}" assigned to Agent "${agent.name}"`,
+      agent,
+      voice,
+    });
+  } catch (error) {
+    console.error("Error assigning voice to agent:", error);
+    res.status(500).json({ error: "Failed to assign voice to agent" });
+  }
+});
+
+module.exports = router;
 
 // Route to save webhook configuration
 router.put("/:id/webhook", async (req, res) => {
