@@ -169,6 +169,10 @@ router.post(
             { id: "remove_extra_spaces", enabled: true },
             { id: "remove_urls_emails", enabled: true },
           ],
+          segmentation: {
+            separator: "###",
+            max_tokens: 500,
+          },
         },
         mode: "custom",
       },
