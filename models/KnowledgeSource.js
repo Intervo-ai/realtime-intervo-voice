@@ -15,10 +15,23 @@ const knowledgeSourceSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  difyDocumentIds: {
+    text: {
+      type: String
+    },
+    file: {
+      type: String
+    },
+    website: {
+      type: String
+    },
+    faq: {
+      type: String
+    }
+  },
   sourceType: {
     type: String,
     enum: ['text', 'file', 'website', 'faq'],
-    required: true
   },
   status: {
     type: String,
