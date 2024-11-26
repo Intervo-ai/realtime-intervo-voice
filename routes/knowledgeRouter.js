@@ -5,6 +5,10 @@ const axios = require("axios");
 const multer = require("multer");
 const authenticateUser = require("../lib/authMiddleware");
 const { Blob } = require("buffer");
+const {
+  difyFaqSourceConfig,
+  difyFileSourceConfig,
+} = require("../config/difyConfig");
 
 // Apply authentication middleware to all routes
 router.use(authenticateUser);
@@ -99,53 +103,105 @@ router.post("/sources/:sourceId/text", async (req, res) => {
   }
 });
 
+// fetch text source form dify and return it
+router.get("/sources/:sourceId/text", async (req, res) => {
+  try {
+    const source = await Source.findById(req.params.sourceId);
+    if (!source.difyDocumentIds?.text) {
+      res.status(200).json({ message: "success", text: "" });
+    } else {
+      const response = await difyClient.get(
+        `/datasets/${source.difySourceId}/documents/${source.difyDocumentIds.text}/segments`
+      );
+      const data = await response.data?.data[0];
+      res.status(200).json({ message: "success", text: data.content });
+    }
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Add FAQ to a source
 router.post("/sources/:sourceId/faq", async (req, res) => {
-  const data = {
-    indexing_technique: "high_quality",
-    process_rule: {
-      rules: {
-        pre_processing_rules: [
-          { id: "remove_extra_spaces", enabled: true },
-          { id: "remove_urls_emails", enabled: true },
-        ],
-        segmentation: {
-          separator: "---",
-          max_tokens: 500,
-        },
-      },
-      mode: "custom",
-    },
-  };
-
   try {
     const { questions } = req.body; // Array of {question, answer}
     const markdownContent = questions
       .map(({ question, answer }) => {
-        return `## ${question}\n\n${answer}\n\n---`;
+        return `Question: ${question}\n\nAnswer: ${answer}\n\n---`;
       })
       .join("\n"); // create markdown from q&a with delimiter as ----
 
     const source = await Source.findById(req.params.sourceId);
     const formData = new FormData();
     const blob = new Blob([markdownContent], { type: "text/markdown" });
-    formData.append("data", JSON.stringify(data));
+    formData.append("data", JSON.stringify(difyFaqSourceConfig));
     formData.append("type", "text/markdown");
     formData.append("file", blob, "questions.md");
 
-    await difyClient.post(
-      `/datasets/${source.difySourceId}/document/create_by_file`,
-      formData,
-      {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      }
-    );
+    if (!source.difyDocumentIds?.faq) {
+      const difyResponse = await difyClient.post(
+        `/datasets/${source.difySourceId}/document/create_by_file`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+      source.difyDocumentIds.faq = difyResponse.data.document?.id;
+    } else {
+      await difyClient.post(
+        `/datasets/${source.difySourceId}/documents/${source.difyDocumentIds.faq}/update_by_file`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+    }
 
     source.sourceType = "faq";
     await source.save();
     res.status(200).json({ message: "FAQs added successfully" });
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// fetch all faqs
+router.get("/sources/:sourceId/faq", async (req, res) => {
+  try {
+    const source = await Source.findById(req.params.sourceId);
+    if (!source.difyDocumentIds?.faq) {
+      res.status(200).json({ message: "success", faqs: [] });
+    } else {
+      const response = await difyClient.get(
+        `/datasets/${source.difySourceId}/documents/${source.difyDocumentIds.faq}/segments`
+      );
+      const data = await response.data?.data;
+      const faqs = data.map((obj) => {
+        const content = obj.content;
+        const questionMatch = content.match(/Question:\s*(.*?)Answer:/);
+        const answerMatch = content.match(/Answer:\s*(.*)/);
+
+        return {
+          question: questionMatch ? questionMatch[1].trim() : "",
+          answer: answerMatch ? answerMatch[1].trim() : "",
+        };
+      });
+      res.status(200).json({ message: "success", faqs: faqs });
+    }
   } catch (error) {
     console.log(error);
     if (error?.response?.data) {
@@ -161,53 +217,75 @@ router.post(
   "/sources/:sourceId/files",
   upload.array("files"),
   async (req, res) => {
-    const data = {
-      indexing_technique: "high_quality",
-      process_rule: {
-        rules: {
-          pre_processing_rules: [
-            { id: "remove_extra_spaces", enabled: true },
-            { id: "remove_urls_emails", enabled: true },
-          ],
-          segmentation: {
-            separator: "###",
-            max_tokens: 500,
-          },
-        },
-        mode: "custom",
-      },
-    };
-
     try {
       if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: "No files uploaded" });
       }
 
       const source = await Source.findById(req.params.sourceId);
+      let fileDocuments = source.difyDocumentIds?.file || [];
       const files = req.files;
 
-      // Upload each file to Dify
+      // Upload each file to Dify. if file name exist in DB, update existing dify document else create a new one and add it to DB
       for (const file of files) {
         const formData = new FormData();
         const blob = new Blob([file.buffer], { type: file.mimetype });
-        formData.append("data", JSON.stringify(data));
-        formData.append("type", "text/plain");
+        formData.append("data", JSON.stringify(difyFileSourceConfig));
+        formData.append("type", file.mimetype);
         formData.append("file", blob, file.originalname);
 
-        await difyClient.post(
-          `/datasets/${source.difySourceId}/document/create_by_file`,
-          formData,
-          {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
-          }
+        const fileExists = fileDocuments.find(
+          (doc) => doc.fileName === file.originalname
         );
+        if (fileExists) {
+          await difyClient.post(
+            `/datasets/${source.difySourceId}/documents/${fileExists.id}/update_by_file`,
+            formData,
+            {
+              headers: {
+                "Content-Type": "multipart/form-data",
+              },
+            }
+          );
+        } else {
+          const response = await difyClient.post(
+            `/datasets/${source.difySourceId}/document/create_by_file`,
+            formData,
+            {
+              headers: {
+                "Content-Type": "multipart/form-data",
+              },
+            }
+          );
+          source.difyDocumentIds.file = [
+            ...source.difyDocumentIds.file,
+            {
+              fileName: file.originalname,
+              id: await response.data.document?.id,
+            },
+          ];
+          fileDocuments = [
+            ...fileDocuments,
+            {
+              fileName: file.originalname,
+              id: await response.data.document?.id,
+            },
+          ];
+        }
       }
 
       source.sourceType = "file";
       await source.save();
-      res.status(200).json({ message: "Files uploaded successfully" });
+      const newFiles = source.difyDocumentIds.file.map((obj) => {
+        return {
+          name: obj.fileName,
+          _id: obj._id,
+          uploaded: true,
+        };
+      });
+      res
+        .status(200)
+        .json({ message: "Files uploaded successfully", files: newFiles });
     } catch (error) {
       console.log(error);
       if (error?.response?.data) {
@@ -218,6 +296,64 @@ router.post(
     }
   }
 );
+
+//get all files from the db
+router.get("/sources/:sourceId/files", async (req, res) => {
+  try {
+    const source = await Source.findById(req.params.sourceId);
+    if (source.difyDocumentIds?.file.length == 0) {
+      res.status(200).json({ message: "success", files: [] });
+    } else {
+      const files = source.difyDocumentIds.file.map((obj) => {
+        return {
+          name: obj.fileName,
+          _id: obj._id,
+          uploaded: true,
+        };
+      });
+      res.status(200).json({ message: "success", files: files });
+    }
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// delete a file from dify and remove the entry from db
+router.delete("/sources/:sourceId/files/:fileId", async (req, res) => {
+  try {
+    const { sourceId, fileId } = req.params;
+    const source = await Source.findById(sourceId);
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+    const fileIndex = source.difyDocumentIds.file.findIndex(
+      (file) => file._id == fileId
+    );
+    if (fileIndex === -1) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    const [deletedFile] = source.difyDocumentIds.file.splice(fileIndex, 1);
+
+    await difyClient.delete(
+      `/datasets/${source.difySourceId}/documents/${deletedFile.id}`
+    );
+
+    await source.save();
+    res.status(200).json({ message: "File deleted successfully" });
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Add website for crawling
 router.post("/sources/:sourceId/crawl", async (req, res) => {
@@ -238,7 +374,7 @@ router.post("/sources/:sourceId/crawl", async (req, res) => {
 // Get all sources
 router.get("/sources", async (req, res) => {
   try {
-    const sources = await Source.find({user: req.user.id});
+    const sources = await Source.find({ user: req.user.id });
     res.json(sources);
   } catch (error) {
     res.status(500).json({ error: error.message });
