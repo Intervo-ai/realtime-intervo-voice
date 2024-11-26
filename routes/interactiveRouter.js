@@ -6,6 +6,7 @@ const twilioClient = require("twilio")(
 );
 const authenticateUser = require("../lib/authMiddleware");
 const fs = require('fs');
+const path = require('path');
 //i want you to create an endpoint that will get a json encoded audio stream and an array list of events
 const express = require('express');
 const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
@@ -16,9 +17,15 @@ const router = express.Router();
 // Store chunks temporarily (in production, consider using Redis or another storage solution)
 const audioChunks = new Map();
 
+// Add this before processing any requests
+const transcriptDir = path.join('public', 'transcripts');
+if (!fs.existsSync(transcriptDir)){
+    fs.mkdirSync(transcriptDir, { recursive: true });
+}
+
 router.post("/", async (req, res) => {
   try {
-    const { audio, format, chunkIndex, totalChunks, events } = req.body;
+    const { audio, format, chunkIndex, totalChunks, events, metadata } = req.body;
     
     if (chunkIndex === undefined || totalChunks === undefined) {
       // Handle single upload (small files)
@@ -82,18 +89,99 @@ router.post("/", async (req, res) => {
 async function processAudioAndEvents(audio, events) {
   try {
     const audioBuffer = Buffer.from(audio, 'base64');
-    console.log("Generating the transcription");
     
+    // Save the audio file
+    const audioFileName = `audio-${Date.now()}.wav`;
+    const audioPath = `public/audio/${audioFileName}`;
+    
+    await fs.promises.writeFile(audioPath, audioBuffer);
+    console.log(`Audio saved to ${audioPath}`);
+    
+    console.log("Generating the transcription");
     const transcription = await googleSpeechRecognize(audioBuffer);
     
-    console.log(transcription, "transcription");
+    // Merge transcription and events chronologically
+    const mergedTimeline = mergeTranscriptionAndEvents(transcription.phrases, events);
+    
+    // Generate markdown content
+    const markdownContent = generateMarkdown(mergedTimeline);
+    
+    // Save markdown file
+    const mdFileName = `timeline-${Date.now()}.md`;
+    const mdPath = `public/transcripts/${mdFileName}`;
+    await fs.promises.writeFile(mdPath, markdownContent);
+    
     return {
-      transcription,
-      processedEvents: await processEvents(events)
+      timeline: mergedTimeline,
+      audioPath: audioPath,
+      markdownPath: mdPath
     };
   } catch (error) {
     throw new Error(`Failed to process audio and events: ${error.message}`);
   }
+}
+
+function mergeTranscriptionAndEvents(phrases, events) {
+  const timeline = [];
+
+  console.log(phrases.length, events.length, "processing phrases and events")
+  
+  // Convert phrases to timeline events
+  const voiceEvents = phrases.map(phrase => ({
+    type: 'voice',
+    startTime: phrase.startTime,
+    endTime: phrase.endTime,
+    transcript: phrase.transcript,
+    words: phrase.words
+  }));
+  
+  // Convert UI events to consistent format
+  const uiEvents = events.map(event => ({
+    type: event.type,
+    startTime: event.startTime,
+    endTime: event.endTime,
+    target: event.target,
+    timestamp: event.timestamp
+  }));
+  
+  // Combine and sort all events by startTime
+  const allEvents = [...voiceEvents, ...uiEvents].sort((a, b) => {
+    if (a.startTime === b.startTime) {
+      // If timestamps match, voice events get precedence
+      return a.type === 'voice' ? -1 : 1;
+    }
+    return a.startTime - b.startTime;
+  });
+  
+  return allEvents;
+}
+
+function generateMarkdown(timeline) {
+  let markdown = '# Session Timeline\n\n';
+  
+  timeline.forEach((event, index) => {
+    const timeStart = formatTime(event.startTime);
+    const timeEnd = formatTime(event.endTime);
+    
+    markdown += `## Event ${index + 1} (${timeStart} - ${timeEnd})\n\n`;
+    
+    if (event.type === 'voice') {
+      markdown += `**Type:** Voice Transcription\n`;
+      markdown += `**Transcript:** ${event.transcript}\n\n`;
+    } else {
+      markdown += `**Type:** ${event.type}\n`;
+      markdown += `**Target:** ${event.target.tagName} (${event.target.className})\n`;
+      markdown += `**XPath:** ${event.target.xpath}\n\n`;
+    }
+  });
+  
+  return markdown;
+}
+
+function formatTime(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const milliseconds = ms % 1000;
+  return `${seconds}.${milliseconds.toString().padStart(3, '0')}s`;
 }
 
 // Helper function to process events
