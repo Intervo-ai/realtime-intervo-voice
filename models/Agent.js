@@ -24,6 +24,10 @@ const agentSchema = new mongoose.Schema({
     method: { type: String, enum: ['GET', 'POST', 'PUT','PATCH', 'DELETE'] },
     event: { type: String }
   },
+  phoneNumber: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "PhoneNumber", 
+  },
   subAgents: {
     intentAgent: {
       type: String,
