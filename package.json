@@ -14,6 +14,7 @@
   "dependencies": {
     "@aws-sdk/client-polly": "^3.696.0",
     "@google-cloud/speech": "^6.7.0",
+    "@google-cloud/storage": "^7.14.0",
     "@google-cloud/text-to-speech": "^5.5.0",
     "@jitsi/rnnoise-wasm": "^0.1.0",
     "audio-buffer-utils": "^5.1.2",
