@@ -6,7 +6,8 @@ const voiceSchema = new mongoose.Schema({
     enum: ["azure", "elevenlabs", "google", "aws"],
     required: true,
   },
-  voiceName: { type: String, required: true },
+  voiceName: { type: String, required: true }, // Original name from service
+  customName: { type: String, required: true }, // Custom name
   language: { type: String, required: true },
   gender: { type: String, enum: ["male", "female", "neutral"], required: true },
   premium: { type: Boolean, default: false },

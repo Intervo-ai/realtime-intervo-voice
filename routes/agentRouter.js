@@ -100,6 +100,64 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Assign a phone number to an agent
+router.post("/:id/assign-phone-number", async (req, res) => {
+  try {
+    const agentId = req.params.id;
+    const { phoneNumberId } = req.body;
+
+    if (!phoneNumberId) {
+      return res.status(400).json({ error: "Phone Number ID is required" });
+    }
+
+    const agent = await Agent.findById(agentId);
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    const phoneNumber = await PhoneNumber.findById(phoneNumberId);
+    if (!phoneNumber) {
+      return res.status(404).json({ error: "Phone Number not found" });
+    }
+
+    agent.phoneNumber = phoneNumberId;
+    await agent.save();
+
+    res.json({
+      success: true,
+      message: "Phone number assigned to agent successfully",
+      agent,
+    });
+  } catch (error) {
+    console.error("Error assigning phone number to agent:", error);
+    res.status(500).json({ error: "Failed to assign phone number to agent" });
+  }
+});
+
+// Remove a phone number from an agent
+router.post("/:id/remove-phone-number", async (req, res) => {
+  try {
+    const agentId = req.params.id;
+
+    const agent = await Agent.findById(agentId);
+    if (!agent) {
+      return res.status(404).json({ error: "Agent not found" });
+    }
+
+    agent.phoneNumber = null;
+    await agent.save();
+
+    res.json({
+      success: true,
+      message: "Phone number removed from agent successfully",
+      agent,
+    });
+  } catch (error) {
+    console.error("Error removing phone number from agent:", error);
+    res.status(500).json({ error: "Failed to remove phone number from agent" });
+  }
+});
+
 // Route to select and assign a voice to an agent
 router.post("/:id/assign-voice", async (req, res) => {
   try {

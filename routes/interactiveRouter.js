@@ -11,6 +11,7 @@ const path = require('path');
 const express = require('express');
 const createSpeechRecognizeStream = require('../services/speechRecognizeStream');
 const googleSpeechRecognize = require('../services/nonStreamGoogleSpeechToText');
+const InteractiveSession = require('../models/InteractiveSession');
 
 const router = express.Router();
 
@@ -98,10 +99,17 @@ async function processAudioAndEvents(audio, events) {
     console.log(`Audio saved to ${audioPath}`);
     
     console.log("Generating the transcription");
-    const transcription = await googleSpeechRecognize(audioBuffer);
+    const transcription = await googleSpeechRecognize({
+      audioPath: audioPath,
+      isLongRunning: true
+    });
     
+    // Replace the sentence grouping logic with function call
+    const sentences = generateSentences(transcription.phrases);
+
+   //
     // Merge transcription and events chronologically
-    const mergedTimeline = mergeTranscriptionAndEvents(transcription.phrases, events);
+    const mergedTimeline = mergeTranscriptionAndEvents(sentences, events);
     
     // Generate markdown content
     const markdownContent = generateMarkdown(mergedTimeline);
@@ -111,14 +119,73 @@ async function processAudioAndEvents(audio, events) {
     const mdPath = `public/transcripts/${mdFileName}`;
     await fs.promises.writeFile(mdPath, markdownContent);
     
+    // Save to MongoDB
+    const session = new InteractiveSession({
+      audioPath,
+      markdownPath: mdPath,
+      sentences,
+      events
+    });
+    await session.save();
+    
     return {
       timeline: mergedTimeline,
       audioPath: audioPath,
-      markdownPath: mdPath
+      markdownPath: mdPath,
+      sessionId: session._id
     };
   } catch (error) {
     throw new Error(`Failed to process audio and events: ${error.message}`);
   }
+}
+
+function generateSentences(phrases) {
+  const sentences = [];
+  let currentSentence = {
+    words: [],
+    startTime: null,
+    endTime: null,
+    transcript: ''
+  };
+
+  phrases.forEach(phrase => {
+    phrase.words.forEach(word => {
+      // Convert Duration object to milliseconds
+      const startTimeMs = (word.startTime.seconds.low * 1000) + (word.startTime.nanos / 1000000);
+      const endTimeMs = (word.endTime.seconds.low * 1000) + (word.endTime.nanos / 1000000);
+      
+      const processedWord = {
+        ...word,
+        startTime: startTimeMs,
+        endTime: endTimeMs
+      };
+
+      currentSentence.words.push(processedWord);
+      if (!currentSentence.startTime) {
+        currentSentence.startTime = startTimeMs;
+      }
+      currentSentence.endTime = endTimeMs;
+      currentSentence.transcript += (currentSentence.transcript ? ' ' : '') + word.word;
+
+      // Check for end of sentence
+      if (word.word.match(/[.!?]$/)) {
+        sentences.push({ ...currentSentence });
+        currentSentence = {
+          words: [],
+          startTime: null,
+          endTime: null,
+          transcript: ''
+        };
+      }
+    });
+  });
+
+  // Push the last sentence if it exists
+  if (currentSentence.words.length > 0) {
+    sentences.push(currentSentence);
+  }
+
+  return sentences;
 }
 
 function mergeTranscriptionAndEvents(phrases, events) {
