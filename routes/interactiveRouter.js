@@ -87,29 +87,120 @@ router.post("/", async (req, res) => {
   }
 });
 
-async function processAudioAndEvents(audio, events) {
-  try {
-    const audioBuffer = Buffer.from(audio, 'base64');
-    
-    // Save the audio file
-    const audioFileName = `audio-${Date.now()}.wav`;
-    const audioPath = `public/audio/${audioFileName}`;
-    
-    await fs.promises.writeFile(audioPath, audioBuffer);
-    console.log(`Audio saved to ${audioPath}`);
-    
-    console.log("Generating the transcription");
-    const transcription = await googleSpeechRecognize({
-      audioPath: audioPath,
-      isLongRunning: true
-    });
-    
-    // Replace the sentence grouping logic with function call
-    const sentences = generateSentences(transcription.phrases);
 
-   //
-    // Merge transcription and events chronologically
-    const mergedTimeline = mergeTranscriptionAndEvents(sentences, events);
+router.post("/step", async (req, res) => {
+  try {
+    const { audio, format, chunkIndex, totalChunks, events, sessionId, stepId } = req.body
+    let session;
+    if (!sessionId) {
+      session = new InteractiveSession();
+      await session.save();
+    } else {
+      session = await InteractiveSession.findById(sessionId);
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          error: 'Session not found'
+        });
+      }
+    }
+    if (chunkIndex === undefined || totalChunks === undefined) {
+      // Handle single upload (small files)
+      const result = await processStepAudioAndEvents(audio, events, session._id, stepId);
+      return res.json({ 
+        success: true, 
+        data: result,
+        sessionId: session._id 
+      });
+    }
+    // Handle chunked upload
+    if (!audioChunks.has(stepId)) {
+      audioChunks.set(stepId, new Array(totalChunks));
+    }
+   // Store this chunk
+    const chunks = audioChunks.get(stepId);
+    chunks[chunkIndex] = audio;
+
+    // Check if all chunks have been received
+    const isComplete = chunks.every(chunk => chunk !== undefined);
+    
+    if (isComplete) {
+      // Combine all chunks
+      const completeAudio = chunks.join('');
+      
+      // Process the complete audio and events
+      const result = await processStepAudioAndEvents(completeAudio, events, session._id, stepId);
+      
+      // Clean up
+      audioChunks.delete(stepId);
+      
+      return res.json({ 
+        success: true, 
+        data: result,
+        sessionId: session._id
+      });
+    }
+
+    // If not complete, acknowledge this chunk
+    return res.json({ 
+      success: true, 
+      sessionId: session._id,
+      message: `Chunk ${chunkIndex + 1} of ${totalChunks} received` 
+    });
+
+  } catch (error) {
+    console.error('Error processing request:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+async function processAudioAndEvents(audio, eventsOriginal) {
+  try {
+    // Local flag for using existing session
+    const useExistingSession = false;  // Set this to true to use existing session
+    const existingSessionId = '67469f8fce591d99b7b78a56';
+
+    let sentences;
+    let audioPath;
+    let session;
+    let events;
+
+    if (useExistingSession) {
+      // Use existing session
+      session = await InteractiveSession.findById(existingSessionId);
+      
+      if (!session) {
+        throw new Error('Existing session not found');
+      }
+      
+      sentences = session.sentences;
+      audioPath = session.audioPath;
+      events = session.events;
+
+    } else {
+      events = eventsOriginal;
+      // Process new audio
+      const audioBuffer = Buffer.from(audio, 'base64');
+      const audioFileName = `audio-${Date.now()}.wav`;
+      audioPath = `public/audio/${audioFileName}`;
+      
+      await fs.promises.writeFile(audioPath, audioBuffer);
+      console.log(`Audio saved to ${audioPath}`);
+      
+      console.log("Generating the transcription");
+      const transcription = await googleSpeechRecognize({
+        audioPath: audioPath,
+        isLongRunning: true
+      });
+      
+      sentences = generateSentences(transcription.phrases);
+    }
+
+    const filteredEvents = filterEvents(events);
+    const mergedTimeline = mergeTranscriptionAndEvents(sentences, filteredEvents);
     
     // Generate markdown content
     const markdownContent = generateMarkdown(mergedTimeline);
@@ -119,14 +210,27 @@ async function processAudioAndEvents(audio, events) {
     const mdPath = `public/transcripts/${mdFileName}`;
     await fs.promises.writeFile(mdPath, markdownContent);
     
-    // Save to MongoDB
-    const session = new InteractiveSession({
+    if(!useExistingSession) {
+      // Update or create step in session
+    const session = await InteractiveSession.findById(sessionId);
+    const stepIndex = session.steps.findIndex(step => step.stepId === stepId);
+    
+    const stepData = {
+      stepId,
       audioPath,
-      markdownPath: mdPath,
       sentences,
-      events
-    });
-    await session.save();
+      events: filteredEvents,
+      markdownPath: mdPath
+    };
+  if (stepIndex === -1) {
+        session.steps.push(stepData);
+    } else {
+      session.steps[stepIndex] = stepData;
+    }
+
+    session.updatedAt = new Date();
+      await session.save();
+    }
     
     return {
       timeline: mergedTimeline,
@@ -134,11 +238,28 @@ async function processAudioAndEvents(audio, events) {
       markdownPath: mdPath,
       sessionId: session._id
     };
+    
   } catch (error) {
     throw new Error(`Failed to process audio and events: ${error.message}`);
   }
 }
 
+function filterEvents(events) {
+  const HOVER_THRESHOLD = 500; // 500ms for hover events
+  const GENERAL_THRESHOLD = 100; // 100ms for other events
+  
+  return events.filter(event => {
+    const duration = event.endTime - event.startTime;
+    
+    // Filter out hover events shorter than HOVER_THRESHOLD
+    if (event.type === 'mouseover' || event.type === 'mouseenter') {
+      return duration >= HOVER_THRESHOLD;
+    }
+    
+    // Filter out other events shorter than GENERAL_THRESHOLD
+    return duration >= GENERAL_THRESHOLD;
+  });
+}
 function generateSentences(phrases) {
   const sentences = [];
   let currentSentence = {
