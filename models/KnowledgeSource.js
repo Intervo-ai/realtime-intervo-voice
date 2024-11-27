@@ -26,10 +26,16 @@ const knowledgeSourceSchema = new mongoose.Schema({
           fileName: { type: String },
         },
       ],
-      default: []
+      default: [],
     },
     website: {
-      type: String,
+      type: [
+        {
+          id: { type: String },
+          url: { type: String },
+        },
+      ],
+      default: [],
     },
     faq: {
       type: String,

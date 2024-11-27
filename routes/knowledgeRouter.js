@@ -8,17 +8,21 @@ const { Blob } = require("buffer");
 const {
   difyFaqSourceConfig,
   difyFileSourceConfig,
+  difyCrawlWebsiteConfig,
+  difyUrlDocumentConfig,
+  difyFileDocumentConfig
 } = require("../config/difyConfig");
+const { getDifyToken } = require("../lib/difyToken");
 
 // Apply authentication middleware to all routes
 router.use(authenticateUser);
 
 // Configuration for Dify API
 const AI_FLOW_DATASET_API_KEY = process.env.AI_FLOW_DATASET_API_KEY;
-const AI_FLOW_API_URL = process.env.AI_FLOW_API_URL;
+const AI_FLOW_URL = process.env.AI_FLOW_URL;
 
 const difyClient = axios.create({
-  baseURL: AI_FLOW_API_URL,
+  baseURL: AI_FLOW_URL + "/v1",
   headers: {
     Authorization: `Bearer ${AI_FLOW_DATASET_API_KEY}`,
     "Content-Type": "application/json",
@@ -37,7 +41,7 @@ router.post("/", async (req, res) => {
     const difyResponse = await difyClient.post("/datasets", {
       name: `${name}_${userId}`,
       description,
-      permission: "only_me",
+      permission: "all_team_members",
     });
 
     // Create source in our database
@@ -355,18 +359,160 @@ router.delete("/sources/:sourceId/files/:fileId", async (req, res) => {
   }
 });
 
-// Add website for crawling
-router.post("/sources/:sourceId/crawl", async (req, res) => {
+// Add website source
+router.post("/sources/:sourceId/url", async (req, res) => {
   try {
-    const { url } = req.body;
     const source = await Source.findById(req.params.sourceId);
+    const { url } = req.body;
+    const difyResponse = await axios.post(
+      `${AI_FLOW_URL}/console/api/website/crawl`,
+      {
+        ...difyCrawlWebsiteConfig,
+        url,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${await getDifyToken()}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    const jobId = await difyResponse.data?.job_id;
 
-    await difyClient.post(`/knowledge-sources/${source.difySourceId}/crawl`, {
-      url,
+    const crawlResponse = await axios.get(
+      `${AI_FLOW_URL}/console/api/website/crawl/status/${jobId}?provider=jinareader`,
+      {
+        headers: {
+          Authorization: `Bearer ${await getDifyToken()}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const urls = crawlResponse.data?.data.map((item) => item.source_url);
+    
+    const difyDocuemntResponse = await axios.post(
+      `${AI_FLOW_URL}/console/api/datasets/${source.difySourceId}/documents`,
+      difyUrlDocumentConfig(jobId, urls),
+      {
+        headers: {
+          Authorization: `Bearer ${await getDifyToken()}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const newUrls = difyDocuemntResponse.data?.documents.map(
+      (item) => {
+        return { id: item.id, url: item.name };
+      }
+    );
+    source.difyDocumentIds.website.push(...newUrls);
+    source.sourceType = "website";
+    await source.save();
+
+    const finalUrls = source.difyDocumentIds.website.map((obj) => {
+      return {
+        url: obj.url,
+        _id: obj._id,
+        status: "Trained",
+      };
     });
 
-    res.status(200).json({ message: "Website crawling initiated" });
+    res.status(200).json({ message: "Website crawling successful", urls: finalUrls});
   } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+//get all urls from the db
+router.get("/sources/:sourceId/url", async (req, res) => {
+  try {
+    const source = await Source.findById(req.params.sourceId);
+    if (source.difyDocumentIds?.website.length == 0) {
+      res.status(200).json({ message: "success", urls: [] });
+    } else {
+      const urls = source.difyDocumentIds.website.map((obj) => {
+        return {
+          url: obj.url,
+          _id: obj._id,
+          status: "Trained",
+        };
+      });
+      res.status(200).json({ message: "success", urls: urls });
+    }
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// retrain an agent
+router.post("/sources/:sourceId/retrain", async (req, res) => {
+  try {
+    const dataTypes = ["website", "file", "text", "faq"];
+    const source = await Source.findById(req.params.sourceId);
+    const { dataType } = req.body;
+
+    if (dataTypes.indexOf(dataType) == -1) return res.status(400).json({ error: "Not a valid source data type" });
+    let fileIds = [];
+    switch (dataType) {
+      case 'file':
+        const files = source.difyDocumentIds.file;
+        if (files.length == 0) {
+          return res.status(500).json({ error: "No files have been uploaded. Please upload a file first" });
+        } else {
+          fileIds = files.map(file => file.id);
+        }
+        break;
+      case 'faq':
+        const faq =  source.difyDocumentIds.faq;
+        if (!faq) {
+          return res.status(500).json({ error: "No FAQs have been added. Please add a FAQ first" });
+        } else {
+          fileIds = [faq];
+        }
+        break;
+      case 'text':
+        const text =  source.difyDocumentIds.text;
+        if (!text) {
+          return res.status(500).json({ error: "No text have been added. Please add a text first" });
+        } else {
+          fileIds = [text];
+        }
+        break;
+      default:
+        return res.status(500).json({ message: "Trained" });
+    }
+    const difyDocuemntResponse = await axios.post(
+      `${AI_FLOW_URL}/console/api/datasets/${source.difySourceId}/documents`,
+      difyFileDocumentConfig(fileIds),
+      {
+        headers: {
+          Authorization: `Bearer ${await getDifyToken()}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log(difyDocuemntResponse);
+    res.status(500).json({ message: "Model trained" });
+  } catch (error) {
+    console.log(error);
+    if (error?.response?.data) {
+      res.status(500).json({ error: error.response.data.message });
+      return;
+    }
     res.status(500).json({ error: error.message });
   }
 });
