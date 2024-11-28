@@ -91,10 +91,14 @@ router.post("/", async (req, res) => {
 router.post("/step", async (req, res) => {
   try {
     const { audio, format, chunkIndex, totalChunks, events, sessionId, stepId } = req.body
+
+    console.log(sessionId, stepId, "session and step id")
     let session;
-    if (!sessionId) {
+    if (!sessionId || sessionId === "undefined") {
+      console.log("creating new session")
       session = new InteractiveSession();
       await session.save();
+      console.log(session._id, "new session id")
     } else {
       session = await InteractiveSession.findById(sessionId);
       if (!session) {
@@ -106,7 +110,7 @@ router.post("/step", async (req, res) => {
     }
     if (chunkIndex === undefined || totalChunks === undefined) {
       // Handle single upload (small files)
-      const result = await processStepAudioAndEvents(audio, events, session._id, stepId);
+      const result = await processAudioAndEvents(audio, events, session._id, stepId);
       return res.json({ 
         success: true, 
         data: result,
@@ -129,7 +133,7 @@ router.post("/step", async (req, res) => {
       const completeAudio = chunks.join('');
       
       // Process the complete audio and events
-      const result = await processStepAudioAndEvents(completeAudio, events, session._id, stepId);
+      const result = await processAudioAndEvents(completeAudio, events, session._id, stepId);
       
       // Clean up
       audioChunks.delete(stepId);
@@ -157,7 +161,47 @@ router.post("/step", async (req, res) => {
   }
 });
 
-async function processAudioAndEvents(audio, eventsOriginal) {
+router.get("/:sessionId", async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = await InteractiveSession.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+
+    // Transform file paths to URLs if needed
+    const steps = session.steps.map(step => ({
+      ...step.toObject(),
+      audioPath: step.audioPath?.replace('public/', '/'),
+      markdownPath: step.markdownPath?.replace('public/', '/')
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        _id: session._id,
+        sessionId: session._id,
+        steps,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Error retrieving session:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+async function processAudioAndEvents(audio, eventsOriginal, sessionId, stepId) {
   try {
     // Local flag for using existing session
     const useExistingSession = false;  // Set this to true to use existing session
@@ -209,10 +253,9 @@ async function processAudioAndEvents(audio, eventsOriginal) {
     const mdFileName = `timeline-${Date.now()}.md`;
     const mdPath = `public/transcripts/${mdFileName}`;
     await fs.promises.writeFile(mdPath, markdownContent);
-    
     if(!useExistingSession) {
       // Update or create step in session
-    const session = await InteractiveSession.findById(sessionId);
+    session = await InteractiveSession.findById(sessionId);
     const stepIndex = session.steps.findIndex(step => step.stepId === stepId);
     
     const stepData = {
@@ -220,11 +263,19 @@ async function processAudioAndEvents(audio, eventsOriginal) {
       audioPath,
       sentences,
       events: filteredEvents,
-      markdownPath: mdPath
+      markdownPath: mdPath,
+      startTime: Math.min(
+        sentences[0]?.startTime ?? Infinity,
+        filteredEvents[0]?.startTime ?? Infinity
+      ),
+      endTime: Math.max(
+        sentences[sentences.length - 1]?.endTime ?? -Infinity,
+        filteredEvents[filteredEvents.length - 1]?.endTime ?? -Infinity
+      )
     };
-  if (stepIndex === -1) {
+      if (stepIndex === -1) {
         session.steps.push(stepData);
-    } else {
+      } else {
       session.steps[stepIndex] = stepData;
     }
 

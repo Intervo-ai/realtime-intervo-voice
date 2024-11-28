@@ -1,21 +1,34 @@
 const mongoose = require('mongoose');
-const Schema = mongoose.Schema;
 
-const InteractiveSessionSchema = new mongoose.Schema({
+const StepSchema = new mongoose.Schema({
+  stepId: String,
   audioPath: String,
-  markdownPath: String,
   sentences: [{
-    words: [{
-      word: String,
-      startTime: Number,
-      endTime: Number
-    }],
+    words: Array,
     startTime: Number,
     endTime: Number,
     transcript: String
   }],
-  events: [Schema.Types.Mixed],
-  createdAt: { type: Date, default: Date.now }
+  events: Array,
+  markdownPath: String,
+  startTime: Number,
+  endTime: Number,
+  timestamp: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+const InteractiveSessionSchema = new mongoose.Schema({
+  steps: [StepSchema],
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
 });
 
 module.exports = mongoose.model('InteractiveSession', InteractiveSessionSchema); 
