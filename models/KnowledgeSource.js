@@ -17,23 +17,38 @@ const knowledgeSourceSchema = new mongoose.Schema({
   },
   difyDocumentIds: {
     text: {
-      type: String,
+      type: {
+        docId: { type: String },
+        fileId: { type: String },
+      },
+      default: {}
     },
     file: {
       type: [
         {
-          id: { type: String },
+          docId: { type: String },
+          fileId: { type: String },
           fileName: { type: String },
         },
       ],
-      default: []
+      default: [],
     },
     website: {
-      type: String,
+      type: [
+        {
+          id: { type: String },
+          url: { type: String },
+        },
+      ],
+      default: [],
     },
     faq: {
-      type: String,
-    },
+      type: {
+        docId: { type: String },
+        fileId: { type: String },
+      },
+      default: {}
+    }
   },
   sourceType: {
     type: String,
