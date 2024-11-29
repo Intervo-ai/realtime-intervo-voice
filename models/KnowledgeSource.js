@@ -37,7 +37,7 @@ const knowledgeSourceSchema = new mongoose.Schema({
       type: [
         {
           id: { type: String },
-          url: { type: String },
+            url: { type: String },
         },
       ],
       default: [],
@@ -60,7 +60,18 @@ const knowledgeSourceSchema = new mongoose.Schema({
     default: "processing",
   },
   metadata: {
-    type: mongoose.Schema.Types.Mixed,
+    type: {
+      tokens: {
+        type: Number,
+      },
+      characters: {
+        type: Number,
+      },
+    },
+    default: {
+      tokens: 0,
+      characters: 0
+    }
   },
   createdAt: {
     type: Date,

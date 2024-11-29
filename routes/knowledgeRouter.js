@@ -83,8 +83,7 @@ router.post("/sources/:sourceId/text", async (req, res) => {
         }
       );
       source.difyDocumentIds.text.docId = difyResponse.data.document?.id;
-      source.difyDocumentIds.text.fileId =
-        difyResponse.data.document?.data_source_info.upload_file_id;
+      source.difyDocumentIds.text.fileId = difyResponse.data.document?.data_source_info.upload_file_id;
     } else {
       // if source type is text, update the text based on dify document id
       const difyUpdateResponse = await difyClient.post(
@@ -94,10 +93,17 @@ router.post("/sources/:sourceId/text", async (req, res) => {
           text: text,
         }
       );
-      source.difyDocumentIds.text.fileId =
-        difyUpdateResponse.data.document?.data_source_info.upload_file_id;
+      source.difyDocumentIds.text.fileId = difyUpdateResponse.data.document?.data_source_info.upload_file_id;
     }
-    source.sourceType = "text";
+
+    const difyDatasets = await difyClient.get(
+      `/datasets/${source.difySourceId}/documents`
+    );
+
+    difyDatasets.data.data.map((item) => {
+      source.metadata.tokens += item.tokens;
+      source.metadata.characters += item.word_count;
+    })
     await source.save();
 
     res.status(200).json({ message: "Text added successfully" });
@@ -178,7 +184,14 @@ router.post("/sources/:sourceId/faq", async (req, res) => {
         difyUpdateResponse.data.document?.data_source_info.upload_file_id;
     }
 
-    source.sourceType = "faq";
+    const difyDatasets = await difyClient.get(
+      `/datasets/${source.difySourceId}/documents`
+    );
+
+    difyDatasets.data.data.map((item) => {
+      source.metadata.tokens += item.tokens;
+      source.metadata.characters += item.word_count;
+    })
     await source.save();
     res.status(200).json({ message: "FAQs added successfully" });
   } catch (error) {
@@ -300,7 +313,15 @@ router.post(
         }
       }
 
-      source.sourceType = "file";
+      const difyDatasets = await difyClient.get(
+        `/datasets/${source.difySourceId}/documents`
+      );
+  
+      difyDatasets.data.data.map((item) => {
+        source.metadata.tokens += item.tokens;
+        source.metadata.characters += item.word_count;
+      })
+      
       await source.save();
       const newFiles = source.difyDocumentIds.file.map((obj) => {
         return {
@@ -369,6 +390,15 @@ router.delete("/sources/:sourceId/files/:fileId", async (req, res) => {
       `/datasets/${source.difySourceId}/documents/${deletedFile.docId}`
     );
 
+    const difyDatasets = await difyClient.get(
+      `/datasets/${source.difySourceId}/documents`
+    );
+
+    difyDatasets.data.data.map((item) => {
+      source.metadata.tokens += item.tokens;
+      source.metadata.characters += item.word_count;
+    })
+    
     await source.save();
     res.status(200).json({ message: "File deleted successfully" });
   } catch (error) {
@@ -428,9 +458,17 @@ router.post("/sources/:sourceId/url", async (req, res) => {
       return { id: item.id, url: item.name };
     });
     source.difyDocumentIds.website.push(...newUrls);
+
+    const difyDatasets = await difyClient.get(
+      `/datasets/${source.difySourceId}/documents`
+    );
+
+    difyDatasets.data.data.map((item) => {
+      source.metadata.tokens += item.tokens;
+      source.metadata.characters += item.word_count;
+    })
     source.sourceType = "website";
     await source.save();
-
     const finalUrls = source.difyDocumentIds.website.map((obj) => {
       return {
         url: obj.url,
@@ -500,6 +538,7 @@ router.post("/sources/:sourceId/retrain", async (req, res) => {
         } else {
           fileIds = files.map((file) => file.fileId);
         }
+        source.sourceType = "file";
         break;
       case "faq":
         const faq = source.difyDocumentIds.faq;
@@ -510,6 +549,7 @@ router.post("/sources/:sourceId/retrain", async (req, res) => {
         } else {
           fileIds = [faq.fileId];
         }
+        source.sourceType = "faq";
         break;
       case "text":
         const text = source.difyDocumentIds.text;
@@ -522,10 +562,12 @@ router.post("/sources/:sourceId/retrain", async (req, res) => {
         } else {
           fileIds = [text.fileId];
         }
+        source.sourceType = "text";
         break;
       default:
         return res.status(500).json({ message: "Trained" });
     }
+    await source.save();
     const difyDocuemntResponse = await axios.post(
       `${AI_FLOW_URL}/console/api/datasets/${source.difySourceId}/documents`,
       difyFileDocumentConfig(fileIds),
@@ -600,13 +642,8 @@ router.put("/sources/:sourceId", async (req, res) => {
 router.delete("/sources/:sourceId", async (req, res) => {
   try {
     const source = await Source.findById(req.params.sourceId);
-
-    // Delete from Dify
     await difyClient.delete(`/datasets/${source.difySourceId}`);
-
-    // Delete from our database
     await Source.findByIdAndDelete(req.params.sourceId);
-
     res.json({ message: "Source deleted successfully" });
   } catch (error) {
     res.status(500).json({ error: error.message });
