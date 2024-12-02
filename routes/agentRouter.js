@@ -100,61 +100,75 @@ router.post("/", async (req, res) => {
   }
 });
 
-// Assign a phone number to an agent
-router.post("/:id/assign-phone-number", async (req, res) => {
+router.post('/:agentId/assign-phone', async (req, res) => {
   try {
-    const agentId = req.params.id;
-    const { phoneNumberId } = req.body;
-
-    if (!phoneNumberId) {
-      return res.status(400).json({ error: "Phone Number ID is required" });
-    }
-
-    const agent = await Agent.findById(agentId);
-    if (!agent) {
-      return res.status(404).json({ error: "Agent not found" });
-    }
+    const { agentId } = req.params; // agentId from URL parameter
+    const { phoneNumberId } = req.body; // phoneNumberId from request body
 
     const phoneNumber = await PhoneNumber.findById(phoneNumberId);
     if (!phoneNumber) {
-      return res.status(404).json({ error: "Phone Number not found" });
+      return res.status(404).json({ error: 'Phone number not found' });
     }
-
-    agent.phoneNumber = phoneNumberId;
-    await agent.save();
-
-    res.json({
-      success: true,
-      message: "Phone number assigned to agent successfully",
-      agent,
-    });
-  } catch (error) {
-    console.error("Error assigning phone number to agent:", error);
-    res.status(500).json({ error: "Failed to assign phone number to agent" });
-  }
-});
-
-// Remove a phone number from an agent
-router.post("/:id/remove-phone-number", async (req, res) => {
-  try {
-    const agentId = req.params.id;
 
     const agent = await Agent.findById(agentId);
     if (!agent) {
-      return res.status(404).json({ error: "Agent not found" });
+      return res.status(404).json({ error: 'Agent not found' });
     }
 
-    agent.phoneNumber = null;
-    await agent.save();
+    // Ensure the phone number is not already in use
+    if (phoneNumber.user) {
+      return res.status(400).json({ error: 'Phone number is already assigned to a user' });
+    }
+
+    // Assign the phone number to the agent
+    phoneNumber.user = agent.user; // Assign to the same user as the agent
+    await phoneNumber.save();
 
     res.json({
-      success: true,
-      message: "Phone number removed from agent successfully",
+      message: 'Phone number assigned to agent successfully',
+      phoneNumber,
       agent,
     });
   } catch (error) {
-    console.error("Error removing phone number from agent:", error);
-    res.status(500).json({ error: "Failed to remove phone number from agent" });
+    console.error('Error assigning phone number to agent:', error);
+    res.status(500).json({ error: 'Failed to assign phone number to agent' });
+  }
+});
+
+router.post(':newAgentId/reassign-phone', async (req, res) => {
+  try {
+    const { newAgentId } = req.params; 
+    const { phoneNumberId } = req.body; 
+
+    // Find the phone number
+    const phoneNumber = await PhoneNumber.findById(phoneNumberId);
+    if (!phoneNumber) {
+      return res.status(404).json({ error: 'Phone number not found' });
+    }
+
+    // Check if the new agent exists
+    const newAgent = await Agent.findById(newAgentId);
+    if (!newAgent) {
+      return res.status(404).json({ error: 'New agent not found' });
+    }
+
+    // Verify the current user owns the phone number
+    if (!phoneNumber.user || phoneNumber.user.toString() !== newAgent.user.toString()) {
+      return res.status(403).json({ error: 'Phone number ownership mismatch' });
+    }
+
+    // Reassign the phone number to the new agent
+    phoneNumber.user = newAgent.user;
+    await phoneNumber.save();
+
+    res.json({
+      message: 'Phone number reassigned successfully',
+      phoneNumber,
+      newAgent,
+    });
+  } catch (error) {
+    console.error('Error reassigning phone number:', error);
+    res.status(500).json({ error: 'Failed to reassign phone number' });
   }
 });
 
