@@ -76,6 +76,20 @@ app.use(
   })
 );
 
+const genericMiddleware = (req, res, next) => {
+  // Log the request method and URL
+  console.log(`Received ${req.method} request for ${req.url}`);
+
+  // Add a custom header to the response
+  res.setHeader('X-Custom-Header', 'This is a custom header');
+
+  // Proceed to the next middleware or route handler
+  next();
+};
+
+// Use the generic middleware
+app.use(genericMiddleware);
+
 // Initialize passport and session
 app.use(passport.initialize());
 app.use(passport.session());
