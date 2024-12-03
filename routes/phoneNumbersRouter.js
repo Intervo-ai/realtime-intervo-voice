@@ -10,7 +10,7 @@ router.use(authenticateUser);
 // Fetch all phone numbers owned by the user: Called when the user goes to phone numbers page
 router.get("/user", async (req, res) => {
   try {
-    const userNumbers = await PhoneNumber.find({ user: req.user.id });
+    const userNumbers = await PhoneNumber.find({ user: req.user.id }).populate('agent', 'agentType name');
     res.json({ success: true, userNumbers });
 } catch (error) {
     console.error("Error fetching user's phone numbers:", error);
@@ -176,7 +176,14 @@ router.post("/twilio/add", async (req, res) => {
 
     await newPhoneNumber.save();
 
-    res.json({ success: true, message: "Phone number added successfully", phoneNumber: newPhoneNumber });
+    const populatedPhoneNumber = await PhoneNumber.findById(newPhoneNumber._id).populate('agent', 'agentType name');
+
+    res.json({
+      success: true,
+      message: "Phone number added successfully",
+      phoneNumber: populatedPhoneNumber,
+    });
+
   } catch (error) {
     console.error("Error adding Twilio phone number:", error);
     res.status(500).json({ error: "Failed to add Twilio phone number" });
@@ -203,10 +210,12 @@ router.put("/assign-agent/:phoneNumberId", async (req, res) => {
     phoneNumber.agent = agentId;
     await phoneNumber.save();
 
+    const populatedPhoneNumber = await PhoneNumber.findById(newPhoneNumber._id).populate('agent', 'agentType name');
+
     res.json({ 
       success: true, 
       message: "Agent assigned successfully", 
-      phoneNumber 
+      phoneNumber: populatedPhoneNumber
     });
   } catch (error) {
     console.error("Error assigning agent to phone number:", error);
