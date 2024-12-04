@@ -44,18 +44,28 @@ router.get(
         { expiresIn: '1h' }
       );
 
+      const isDevelopment = process.env.NODE_ENV === 'development';
       
-      // Set token in HTTP-only cookie
-      res.cookie('authToken', token, {
-        httpOnly: true,
-        secure: true, // Changed to true since you're using HTTPS
-        sameSite:"None",
-        maxAge: 3600000, // 1 hour
-        path: "/",
-        domain: 'codedesign.app' // Add the domain
-
+    // Clear any existing cookies first
+      res.clearCookie('authToken', {
+        domain: '.development-api.intervo.ai',
+        path: '/'
+      });
+      res.clearCookie('authToken', {
+        domain: '.intervo.ai',
+        path: '/'
       });
 
+      // Set the new cookie
+      res.cookie('authToken', token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: 3600000,
+        path: "/",
+        domain: 'intervo.ai'
+      });
+// ... existing
       // Redirect to frontend
       const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(redirectUrl);
@@ -69,6 +79,7 @@ router.get(
 
 router.get('/status', (req, res) => {
   const token = req.cookies.authToken;
+  console.log(token, "token");
 
   if (!token) {
     return res.status(400).json({ message: 'Authentication token missing' });

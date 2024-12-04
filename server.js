@@ -1,12 +1,24 @@
 const express = require("express");
 const dotenv = require("dotenv");
-dotenv.config();
+const path = require('path');
+
+// Determine which .env file to load
+const envFile = process.env.NODE_ENV === 'production'
+  ? '.env.production'
+  : process.env.NODE_ENV === 'staging'
+    ? '.env.staging'
+    : '.env.development';
+
+console.log('Loading environment file:', envFile);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+
+// Load the environment variables from the file
+dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 
 const cors = require("cors");
 const http = require("http");
 const WebSocket = require("ws");
 const twilio = require("twilio");
-const path = require("path");
 const mongoose = require("mongoose");
 const session = require("express-session");
 const connectDB = require('./config/dbConfig');
@@ -17,8 +29,15 @@ const passport = require("./config/passportConfig");
 const app = express();
 const port = process.env.PORT || 3003;
 
+const allowedOrigins = [
+  'https://intervo.ai',
+  'http://localhost:3000',
+  'https://app.intervo.ai',
+  'https://staging-app.intervo.ai'
+];
+
 const corsOptions = {
-  origin: 'http://localhost:3000', // Your frontend URL
+  origin: allowedOrigins, // Your frontend URL
   credentials: true, // Important for cookies
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
@@ -129,6 +148,16 @@ app.post('/call-status', (req, res) => {
   res.sendStatus(200);
 });
 
+// Add this before the server.listen call
+app.get("/health", (req, res) => {
+  console.log("Health check requested");
+  res.json({
+    status: "Server running well",
+    environment: process.env.NODE_ENV || "development",
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Use routers
 app.use("/stream", streamRouter);
 app.use("/voice", voiceRouter);
@@ -147,7 +176,9 @@ app.use("/phone-number", phoneNumbersRouter);
 app.use("/admin-phone-number",phoneNumbersAdminRouter);
 app.use("/get-voices",getVoicesRouter);
 app.use("/get-admin-voices",getVoicesAdminRouter);
-app.use("./twilio",twilioRouter);
+app.use("/twilio",twilioRouter);
+
+
 
 // Create shared HTTP server for both Express and WebSocket
 const server = http.createServer(app);
