@@ -35,6 +35,7 @@ router.get("/intervo", async (req, res) => {
 
 // Fetch the user's temporary number: Called when the user opens the add phone number popup.
 router.get("/temporary", async (req, res) => {
+  console.log("Fetching temporary number for user:", req.user.id);
   try {
     const temporaryNumber = await PhoneNumber.findOne({
       user: req.user.id,
@@ -129,7 +130,8 @@ router.post("/twilio/add", async (req, res) => {
     const { phoneNumber, agentId, friendlyName } = req.body;
     
     // Initialize Twilio client
-    const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_API_KEY);
+    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
     
     // Fetch number details from Twilio
     const twilioNumbers = await client.incomingPhoneNumbers.list({

@@ -59,7 +59,7 @@ router.get("/:id/connect-info", async (req, res) => {
     }
 
     // Generate URL dynamically
-    const url = `https://call-plugin-api.codedesign.app/workflow/${agent.uniqueIdentifier}`;
+    const url = `https://${process.env.BASE_URL}/workflow/${agent.uniqueIdentifier}`;
     const apiKey = agent.apiKey;
 
     res.json({ url, apiKey });
@@ -316,7 +316,7 @@ router.put("/:id/publish", async (req, res) => {
     await agent.save();
 
     // Generate URL dynamically
-    const url = `https://call-plugin-api.codedesign.app/workflow/${agent.uniqueIdentifier}`;
+    const url = `${process.env.BASE_URL}/workflow/${agent.uniqueIdentifier}`;
 
     
     if(!agent.published){

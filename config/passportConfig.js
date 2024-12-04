@@ -9,7 +9,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "https://call-plugin-api.codedesign.app/auth/google/callback", // Must match Google Console
+      callbackURL: `https://${process.env.BASE_URL}/auth/google/callback`, // Must match Google Console
     },
     (accessToken, refreshToken, profile, done) => {
       // Find or create user logic

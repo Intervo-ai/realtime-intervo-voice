@@ -51,7 +51,7 @@ router.post("/", async (req, res) => {
     fs.writeFileSync(audioFilePath, audioContent, "binary");
 
     // Serve the audio file via a public URL
-    const publicAudioUrl = `https://call-plugin-api.codedesign.app/public/${uniqueId}.mp3`;
+    const publicAudioUrl = `https://${process.env.BASE_URL}/public/${uniqueId}.mp3`;
     
     console.log(publicAudioUrl, "this is the public audio url");
     response.play(publicAudioUrl);

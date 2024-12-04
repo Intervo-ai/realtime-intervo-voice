@@ -109,7 +109,7 @@ router.post("/:uniqueIdentifier", authenticateApiKeyAndIdentifier, async (req, r
     };
 
     // Trigger a call to the /stream endpoint
-    const streamApiUrl = "https://call-plugin-api.codedesign.app/stream";
+    const streamApiUrl = `https://${process.env.BASE_URL}/stream`;
     try {
       const response = await axios.post(streamApiUrl, {
         aiConfig: config

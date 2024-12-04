@@ -54,7 +54,7 @@ router.post("/", async (req, res) => {
   const { phoneNumber, leadPrompt, introduction, sttService, aiEndpoint, ttsService, conversationId, agentId,activityId } = aiConfig;
   
   console.log(conversationId, "conversationId");
-  const serverDomain = "call-plugin-api.codedesign.app";
+  const serverDomain = process.env.BASE_URL;
 
   // If no phone number, return TwiML for WebRTC client
   if (!phoneNumber) {

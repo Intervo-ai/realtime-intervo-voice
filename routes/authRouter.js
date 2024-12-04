@@ -37,16 +37,24 @@ router.get(
         }).save();
       }
 
-      // Generate a JWT token
-      const token = jwt.sign(
+      // Generate access token and refresh token
+      const accessToken = jwt.sign(
         { userId: user._id, email: user.email },
         JWT_SECRET,
         { expiresIn: '1h' }
       );
 
-      const isDevelopment = process.env.NODE_ENV === 'development';
-      
-    // Clear any existing cookies first
+      const refreshToken = jwt.sign(
+        { userId: user._id },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      // Store refresh token in user document
+      user.refreshToken = refreshToken;
+      await user.save();
+
+      // Clear any existing cookies first
       res.clearCookie('authToken', {
         domain: '.development-api.intervo.ai',
         path: '/'
@@ -55,17 +63,30 @@ router.get(
         domain: '.intervo.ai',
         path: '/'
       });
+      res.clearCookie('refreshToken', {
+        domain: '.intervo.ai',
+        path: '/'
+      });
 
-      // Set the new cookie
-      res.cookie('authToken', token, {
+      // Set both cookies
+      res.cookie('authToken', accessToken, {
         httpOnly: true,
         secure: true,
         sameSite: "None",
-        maxAge: 3600000,
+        maxAge: 3600000, // 1 hour
         path: "/",
         domain: 'intervo.ai'
       });
-// ... existing
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        maxAge: 7 * 24 * 3600000, // 7 days
+        path: "/",
+        domain: 'intervo.ai'
+      });
+
       // Redirect to frontend
       const redirectUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(redirectUrl);
@@ -99,6 +120,45 @@ router.get('/logout', (req, res) => {
   req.logout(() => {
     res.redirect('/');
   });
+});
+
+// Add this new route
+router.post('/refresh-token', async (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+  
+  if (!refreshToken) {
+    return res.status(401).json({ message: 'Refresh token missing' });
+  }
+
+  try {
+    const decoded = jwt.verify(refreshToken, JWT_SECRET);
+    const user = await User.findById(decoded.userId);
+
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
+
+    // Generate new access token
+    const newAccessToken = jwt.sign(
+      { userId: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Set new access token cookie
+    res.cookie('authToken', newAccessToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "None",
+      maxAge: 3600000,
+      path: "/",
+      domain: 'intervo.ai'
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(401).json({ message: 'Invalid refresh token' });
+  }
 });
 
 module.exports = router;

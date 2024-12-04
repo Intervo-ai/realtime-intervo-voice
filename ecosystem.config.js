@@ -2,12 +2,12 @@
 module.exports = {
   apps: [
     {
-      name: "twilio",
+      name: "intervo-dev",
       script: "server.js",
-      watch: true, // Automatically restart on file change
- ignore_watch: [
-      ".git",
-      ".git/*",
+      watch: true,
+      ignore_watch: [
+        ".git",
+        ".git/*",
         "node_modules",
         "logs",
       ],
@@ -16,10 +16,34 @@ module.exports = {
       },
       env: {
         NODE_ENV: "development",
-        PORT: 3003, // Customize your environment variables here
+        PORT: 3003,
       },
-      env_production: {
+    },
+    {
+      name: "intervo-prod",
+      script: "server.js",
+      watch: false,
+      env: {
         NODE_ENV: "production",
+        PORT: 3004,
+      },
+    },
+    {
+      name: "intervo-staging",
+      script: "server.js",
+      watch: true,
+      ignore_watch: [
+        ".git",
+        ".git/*",
+        "node_modules",
+        "logs",
+      ],
+      watch_options: {
+        followSymlinks: false,
+      },
+      env: {
+        NODE_ENV: "staging",
+        PORT: 3005,
       },
     },
   ],
