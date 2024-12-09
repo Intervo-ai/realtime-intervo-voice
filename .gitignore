@@ -3,4 +3,5 @@ node_modules
 public
 .env.development
 .env.production
-.env.staging    
+.env.staging   
+config/intervo-google-key.json

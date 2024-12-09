@@ -212,12 +212,10 @@ router.put("/assign-agent/:phoneNumberId", async (req, res) => {
     phoneNumber.agent = agentId;
     await phoneNumber.save();
 
-    const populatedPhoneNumber = await PhoneNumber.findById(newPhoneNumber._id).populate('agent', 'agentType name');
 
     res.json({ 
       success: true, 
       message: "Agent assigned successfully", 
-      phoneNumber: populatedPhoneNumber
     });
   } catch (error) {
     console.error("Error assigning agent to phone number:", error);

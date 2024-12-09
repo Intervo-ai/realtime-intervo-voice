@@ -5,7 +5,7 @@ const { streamTTS: awsStreamTTS } = require('./pollyTTS');
 
 function getTTSService(ttsService) {
     switch (ttsService) {
-        case 'azure':
+        case 'Azure Speech Services':
             return azureStreamTTS;
         case 'elevenlabs':
             return elevenLabsStreamTTS;

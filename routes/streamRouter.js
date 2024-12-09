@@ -56,12 +56,15 @@ router.post("/", async (req, res) => {
   console.log(conversationId, "conversationId");
   const serverDomain = process.env.BASE_URL;
 
+    console.log(typeof phoneNumber, "phoneNumber");
   // If no phone number, return TwiML for WebRTC client
   if (!phoneNumber) {
     const twiml = new VoiceResponse();
     const connect = twiml.connect();
     const stream = connect.stream({
-      url: `wss://${serverDomain}`
+      url: `wss://${serverDomain}`,
+      statusCallback: `https://${serverDomain}/stream/stream-status-internal`,
+      statusCallbackMethod: 'POST'
     });
 
     // Add parameters individually
@@ -126,6 +129,11 @@ router.post("/stream-status", (req, res) => {
     console.error("WebSocket stream failed to establish.");
   }
 
+  res.sendStatus(200);
+});
+
+router.post("/stream-status-internal", (req, res) => {
+  console.log("Stream status internal:", req.body);
   res.sendStatus(200);
 });
 
